@@ -12,9 +12,10 @@
     "api:dev": "pnpm --filter @sk/api dev",
     "api:start": "pnpm --filter @sk/api start",
     "web": "pnpm --filter @sk/web dev",
-    "build": "pnpm --filter @sk/web build",
+    "build": "pnpm --filter @sk/db generate && pnpm --filter @sk/web build",
     "typecheck": "pnpm --filter @sk/api typecheck && pnpm --filter @sk/web typecheck",
-    "dev": "concurrently -n api,web -c yellow,green \"pnpm api:dev\" \"pnpm web\""
+    "dev": "concurrently -n api,web -c yellow,green \"pnpm api:dev\" \"pnpm web\"",
+    "start": "pnpm --filter @sk/api start"
   },
   "devDependencies": {
     "typescript": "^5.5.4",

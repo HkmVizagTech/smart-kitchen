@@ -71,18 +71,23 @@ in `apps/api/src/guard.ts`, because the nav only controls what is *shown*.
 
 ## Deploying
 
-In the Railway dashboard:
+In the Railway dashboard, create a service, connect it to this repo, and set
+under **Settings**:
 
-1. Create a service (or reuse one of the four), and set its **Config File** to
-   `railway.web.json`.
-2. Give it `VITE_API_URL` = the api service's URL.
-3. Generate a domain, check it, then delete the other three web services.
+| Field | Value |
+|---|---|
+| Build Command | `pnpm --filter @sk/web build` |
+| Start Command | `pnpm exec serve -s apps/web/dist -l tcp://0.0.0.0:$PORT` |
+| Variable | `VITE_API_URL` = the api service's public URL |
+
+Then generate a domain, check it, and delete the four old web services.
+
+Railway's Config as Code is deprecated and closed to new services since
+2026-08-28, so there is no `railway.web.json` — the commands go in the
+dashboard. See the deployment section of the README for what this means for the
+`api` service's legacy `railway.json` before 2026-12-01.
 
 The `api` and `Postgres` services are untouched.
-
-```bash
-railway up --service web
-```
 
 ## Verifying
 

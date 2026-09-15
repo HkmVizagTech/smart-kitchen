@@ -50,19 +50,36 @@ output; they are not stored in the source.
 
 ## Deployment
 
-Two Railway services, both built from **this same repo**. Which app a service
-builds is decided by its **Settings → Config File**:
+Two Railway services, both built from **this same repo**, plus a `Postgres`
+service with a volume. Which app a service builds is decided by its **Build
+Command** and **Start Command**, set in that service's Settings:
 
-| Service | Config file | Builds |
+| Service | Build Command | Start Command |
 |---|---|---|
-| `api` | `railway.json` | `apps/api` |
-| `web` | `railway.web.json` | `apps/web` |
+| `web` | `pnpm --filter @sk/web build` | `pnpm exec serve -s apps/web/dist -l tcp://0.0.0.0:$PORT` |
+| `api` | `pnpm --filter @sk/db generate` | `pnpm --filter @sk/api start` |
 
-Plus a `Postgres` service with a volume.
+The root `build` and `start` scripts are a safety net, not the normal path: with
+no config file and no dashboard commands, a builder auto-detects them and the
+**api** still comes up correctly (`build` generates the Prisma client — and
+builds the web app too, which is wasted but harmless; `start` runs the api).
+That is what makes it safe to delete a Railway config file without first being
+able to set the dashboard values, since Railway locks those fields while a
+config file supplies them.
 
-The web service is static — it runs `serve -s apps/web/dist`. Its API URL is
-**baked in at build time** from `VITE_API_URL`, so changing the API's address
-means rebuilding it, not just restarting it.
+> **There are deliberately no `railway.json` / `railway.*.json` files in this
+> repo.** Railway reads a root `railway.json` and applies it to *every* service
+> built from the repo, overriding that service's dashboard settings. That is
+> exactly what broke the first `web` deploy: it picked up the api's config, ran
+> `prisma generate` instead of `vite build`, produced no `apps/web/dist`, and
+> served 404s from a container that looked healthy.
+>
+> Railway's Config as Code is deprecated anyway — closed to new services since
+> 2026-08-28, and existing files stop being read on 2026-12-01 — so the commands
+> above live in each service's dashboard. If you ever reintroduce a config file,
+> remember it is repo-wide, not per-service. The supported replacement is
+> Infrastructure as Code (`.railway/railway.ts`), applied with
+> `railway config apply` from the CLI rather than read on deploy.
 
 ### Required variables
 
@@ -77,7 +94,7 @@ Optional: `APP_TIMEZONE` (default `Asia/Kolkata`), `TOKEN_TTL_DAYS` (default 30)
 
 ### Deploying
 
-Once the services are connected to this repo, a push to `main` deploys them.
+Both services are connected to this repo, so a push to `main` deploys them.
 To push from a machine instead:
 
 ```bash
