@@ -27,10 +27,15 @@ setInterval(() => {
 }, SWEEP_EVERY_MS).unref?.();
 
 function clientKey(req: FastifyRequest): string {
-  // Railway sits behind a proxy, so the real client is the first entry in
-  // x-forwarded-for. Fall back to the socket address.
-  const fwd = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim();
-  return fwd || req.ip || "unknown";
+  // req.ip, with the server's trustProxy hop count, resolves to the address
+  // Railway's edge actually saw.
+  //
+  // This used to read the FIRST entry of X-Forwarded-For by hand, which was a
+  // straightforward bypass: a proxy APPENDS to that header, so a value the
+  // client invented lands in front of the real one. Sending a different fake
+  // address on each request gave every request its own bucket and the limit
+  // never fired. Never key a limiter on a header the client can write.
+  return req.ip || "unknown";
 }
 
 /**
