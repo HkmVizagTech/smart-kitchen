@@ -16,16 +16,16 @@ signs it off, which unlocks that route's next booking.
 ```
 apps/
   api/            Fastify + Prisma backend — the only service that touches Postgres
-  booking-web/    Booking portal        (React + Vite)
-  kitchen/        Kitchen + packing     (React + Vite)
-  verification/   Verify close-outs     (React + Vite)
-  admin/          Super Admin console   (React + Vite)
-  booking/        DEAD — abandoned Expo version, not in the workspace
+  web/            The app everyone uses. One sign-in; the role on your account
+                  decides which sections appear (see apps/web/src/nav.tsx)
 packages/
   db/             Prisma schema, client and seed
   logic/          Shared rules: order windows + the packing/vessel engine
 docs/             Specs, the original build plan, and reference spreadsheets
 ```
+
+Four separate apps were merged into `apps/web` in September 2026 — see
+[`MERGE_NOTES.md`](MERGE_NOTES.md).
 
 ## Run it locally
 
@@ -38,45 +38,38 @@ pnpm db:generate           # build the Prisma client
 pnpm db:push               # create the tables
 pnpm db:seed               # units, dishes, vessels, demo users
 
-pnpm web                   # API + all four apps together
+pnpm dev                   # API + the web app together
 ```
 
-| App | Local URL |
-|---|---|
-| Super Admin | http://localhost:5173 |
-| Kitchen | http://localhost:5174 |
-| Verification | http://localhost:5175 |
-| Booking | http://localhost:5176 |
-| API | http://localhost:4000 |
+The app runs at http://localhost:5173 and the API at http://localhost:4000.
+Without a `.env` in `apps/web`, the app calls `http://<page-host>:4000`, which is
+why local dev needs no configuration. `pnpm db:studio` browses the data.
 
-Without a per-app `.env`, each front-end calls `http://<page-host>:4000`, which
-is why local dev needs no configuration. `pnpm db:studio` browses the data.
+`pnpm db:seed` prints the starter account passwords once — copy them from that
+output; they are not stored in the source.
 
 ## Deployment
 
-Five Railway services, all built from **this same repo**. Which app a service
+Two Railway services, both built from **this same repo**. Which app a service
 builds is decided by its **Settings → Config File**:
 
-| Service | Config file | Builds | Public URL |
-|---|---|---|---|
-| `api` | `railway.json` | `apps/api` | `api-production-24df3` |
-| `web-booking` | `railway.booking.json` | `apps/booking-web` | `hkbooking` |
-| `web-kitchen` | `railway.kitchen.json` | `apps/kitchen` | `hkkitchen` |
-| `verification` | `railway.verify.json` | `apps/verification` | `hkverification` |
-| `admin` | `railway.admin.json` | `apps/admin` | `hkadmin` |
+| Service | Config file | Builds |
+|---|---|---|
+| `api` | `railway.json` | `apps/api` |
+| `web` | `railway.web.json` | `apps/web` |
 
 Plus a `Postgres` service with a volume.
 
-The four web services are static — they run `serve -s apps/<app>/dist`. Their
-API URL is **baked in at build time** from `VITE_API_URL`, so changing the API's
-address means rebuilding all four, not just restarting them.
+The web service is static — it runs `serve -s apps/web/dist`. Its API URL is
+**baked in at build time** from `VITE_API_URL`, so changing the API's address
+means rebuilding it, not just restarting it.
 
 ### Required variables
 
 | Service | Variables |
 |---|---|
 | `api` | `DATABASE_URL` = `${{Postgres.DATABASE_URL}}`, `AUTH_SECRET`, `UPDATE_SECRET` |
-| each web service | `VITE_API_URL` |
+| `web` | `VITE_API_URL` |
 
 `AUTH_SECRET` is mandatory — the API refuses to start in production without it.
 Optional: `APP_TIMEZONE` (default `Asia/Kolkata`), `TOKEN_TTL_DAYS` (default 30),
@@ -89,20 +82,21 @@ To push from a machine instead:
 
 ```bash
 railway up --service api
-railway up --service web-booking   --detach
-railway up --service web-kitchen   --detach
-railway up --service verification  --detach
-railway up --service admin         --detach
+railway up --service web --detach
 ```
 
 ## Roles
 
-| Role | App | Does |
+| Role | Lands on | Sees |
 |---|---|---|
-| `BOOKING` | Booking | Places orders, submits consumption + feedback |
-| `KITCHEN_ADMIN` | Kitchen | Cook / pack / dispatch, packing sheets |
-| `VERIFICATION_ADMIN` | Verification | Verifies close-outs, unlocks reorder |
-| `SUPER_ADMIN` | Super Admin | Everything, plus user and master-data management |
+| `BOOKING` | New Booking | New Booking · My Bookings · Close a Meal |
+| `KITCHEN_ADMIN` | Orders | Orders · Packing Sheet |
+| `VERIFICATION_ADMIN` | To verify | To verify · Payments |
+| `SUPER_ADMIN` | Dashboard | all 14 sections |
+
+Which sections a role sees is one table: `apps/web/src/nav.tsx`. That controls
+what is *shown* — what is *allowed* is enforced by the API in
+`apps/api/src/guard.ts`, and both must agree.
 
 Only `BOOKING` accounts can self-register. The other three are created by a
 Super Admin from the admin console.
@@ -119,12 +113,13 @@ Super Admin from the admin console.
 - **The packing Excel is gated** — it generates only once all six routes have
   booked that session.
 
-## Mobile apps
+## Mobile
 
-Four Android APKs built with Capacitor (same web apps in a native shell). Build
-with `build-android.sh` (macOS, JDK 17). Ship JS-only updates over the air with
-`push-update.sh`, which uploads bundles to the API under `UPDATE_SECRET`.
-iPhone users add the web URL to their home screen instead.
+The app is a PWA — open the URL and add it to the home screen on Android or iOS.
+
+The four old Capacitor APKs in `apk-out/` are from before the merge and are now
+stale: they point at the old per-role URLs. `build-android.sh` only runs on
+macOS. See [`MERGE_NOTES.md`](MERGE_NOTES.md) if you want a merged APK later.
 
 ## Security
 

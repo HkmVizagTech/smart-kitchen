@@ -2,6 +2,15 @@ import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { prisma } from "@sk/db";
 import { sign, verify } from "../auth.js";
+import { rateLimit } from "../rateLimit.js";
+
+// Limits are env-tunable: the defaults suit a small internal tool, but tests
+// and load checks need to raise them, and a bigger deployment may want them
+// tighter. Set to 0 to disable a limit entirely.
+const LOGIN_LIMIT = Number(process.env.LOGIN_RATE_LIMIT ?? 10);
+const LOGIN_WINDOW_MS = Number(process.env.LOGIN_RATE_WINDOW_MS ?? 60_000);
+const SIGNUP_LIMIT = Number(process.env.SIGNUP_RATE_LIMIT ?? 5);
+const SIGNUP_WINDOW_MS = Number(process.env.SIGNUP_RATE_WINDOW_MS ?? 60 * 60_000);
 
 // Roles a stranger may create for themselves. Everything else — kitchen,
 // verification and especially SUPER_ADMIN — is created by a Super Admin from
@@ -43,7 +52,7 @@ export default async function authRoutes(app: FastifyInstance) {
       address?: string;
       photo?: string;
     };
-  }>("/auth/signup", async (req, reply) => {
+  }>("/auth/signup", { preHandler: rateLimit({ limit: SIGNUP_LIMIT, windowMs: SIGNUP_WINDOW_MS }) }, async (req, reply) => {
     const b = req.body;
     if (!SELF_SIGNUP_ROLES.includes(String(b.role).toUpperCase()))
       return reply.code(403).send({
@@ -81,7 +90,10 @@ export default async function authRoutes(app: FastifyInstance) {
   });
 
   // Log in with username OR email OR phone + password.
-  app.post<{ Body: { identifier: string; password: string } }>("/auth/login", async (req, reply) => {
+  app.post<{ Body: { identifier: string; password: string } }>(
+    "/auth/login",
+    { preHandler: rateLimit({ limit: LOGIN_LIMIT, windowMs: LOGIN_WINDOW_MS }) },
+    async (req, reply) => {
     const id = (req.body.identifier ?? "").trim();
     const idLower = id.toLowerCase();
     if (!id || !req.body.password) return reply.code(422).send({ error: "Enter your login and password." });
@@ -91,7 +103,8 @@ export default async function authRoutes(app: FastifyInstance) {
     if (!user || !user.active || user.deletedAt || !(await bcrypt.compare(req.body.password, user.passwordHash)))
       return reply.code(401).send({ error: "Invalid login or password." });
     return { token: sign({ userId: user.id, role: user.role, unitId: user.unitId }), user: publicUser(user) };
-  });
+    }
+  );
 
   // Current user from token.
   app.get("/auth/me", async (req, reply) => {

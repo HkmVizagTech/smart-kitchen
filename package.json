@@ -11,11 +11,10 @@
     "db:studio": "pnpm --filter @sk/db studio",
     "api:dev": "pnpm --filter @sk/api dev",
     "api:start": "pnpm --filter @sk/api start",
-    "admin": "pnpm --filter @sk/admin dev",
-    "kitchen": "pnpm --filter @sk/kitchen dev",
-    "verification": "pnpm --filter @sk/verification dev",
-    "book": "pnpm --filter @sk/booking-web dev",
-    "web": "concurrently -n api,booking,kitchen,verify,admin -c yellow,blue,magenta,cyan,green \"pnpm api:dev\" \"pnpm book\" \"pnpm kitchen\" \"pnpm verification\" \"pnpm admin\""
+    "web": "pnpm --filter @sk/web dev",
+    "build": "pnpm --filter @sk/web build",
+    "typecheck": "pnpm --filter @sk/api typecheck && pnpm --filter @sk/web typecheck",
+    "dev": "concurrently -n api,web -c yellow,green \"pnpm api:dev\" \"pnpm web\""
   },
   "devDependencies": {
     "typescript": "^5.5.4",

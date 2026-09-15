@@ -83,8 +83,13 @@ export default async function orderRoutes(app: FastifyInstance) {
     }));
   });
 
-  // Place an order. The kitchen is auto-assigned to the next free section for
-  // this date+session (one order per kitchen). Tiffin/dinner: items=[{dishId,plates}].
+  // Place an order.
+  //
+  // The route defaults to the next free one for this date+session, but the
+  // booker may override it by sending `unitId` — useful when a specific unit is
+  // ordering for itself rather than taking whatever slot is open. Either way
+  // one route holds at most one order per session (enforced by a unique index).
+  // Tiffin/dinner: items=[{dishId,plates}].
   app.post<{
     Body: {
       date: string;
@@ -93,6 +98,8 @@ export default async function orderRoutes(app: FastifyInstance) {
       bookedById?: number;
       items?: { dishId: number; plates: number }[];
       peopleCount?: number;
+      /** Route to book. Omit to auto-assign the next free one. */
+      unitId?: number;
     };
   }>("/orders", { preHandler: requireRole("BOOKING") }, async (req, reply) => {
     const b = req.body;
@@ -102,31 +109,44 @@ export default async function orderRoutes(app: FastifyInstance) {
     const check = canPlaceOrder(b.session, new Date(), forDate, b.isEmergency);
     if (!check.allowed) return reply.code(422).send({ error: check.reason });
 
-    // One order per booker per meal per day (emergency has no limit).
+    // One order per booker, per meal, per day. Applies whether the booker chose
+    // a route or left it on auto — choosing a route changes WHERE the order
+    // goes, not how many a person may place. Emergency orders are exempt.
+    //
+    // Two separate limits are in play and both matter:
+    //   this one      — one person cannot book the same meal twice in a day
+    //   the DB index  — one route holds at most one order per date+session
     if (!b.isEmergency) {
       const dup = await prisma.order.findFirst({
-        where: {
-          bookedById,
-          session: b.session,
-          isEmergency: false,
-          date: dayRange(b.date),
-        },
+        where: { bookedById, session: b.session, isEmergency: false, date: dayRange(b.date) },
+        include: { unit: true },
       });
       if (dup)
-        return reply
-          .code(409)
-          .send({ error: `You have already booked ${b.session.toLowerCase()} for this day.` });
+        return reply.code(409).send({
+          error: `You have already booked ${SES_LABEL[b.session] ?? b.session} for this day (${dup.unit.name}).`,
+        });
     }
 
-    // Auto-assign to the next kitchen (Unit-1…Others) that has no order yet
-    // for this date+session.
+    // Pick the route: the booker's choice if they made one, otherwise the next
+    // free one.
     const cov = await coverage(forDate, b.session);
-    const freeUnit = cov.units.find((u) => !u.booked);
-    if (!freeUnit)
-      return reply
-        .code(409)
-        .send({ error: `All ${cov.total} kitchens are already booked for this ${b.session.toLowerCase()}.` });
-    const assignedUnitId = freeUnit.id;
+    const meal = SES_LABEL[b.session]?.toLowerCase() ?? b.session.toLowerCase();
+    let chosenUnit;
+    if (b.unitId != null) {
+      chosenUnit = cov.units.find((u) => u.id === b.unitId);
+      if (!chosenUnit) return reply.code(422).send({ error: "That route no longer exists." });
+      if (chosenUnit.booked)
+        return reply
+          .code(409)
+          .send({ error: `${chosenUnit.name} is already booked for ${meal} on this date. Pick another route.` });
+    } else {
+      chosenUnit = cov.units.find((u) => !u.booked);
+      if (!chosenUnit)
+        return reply
+          .code(409)
+          .send({ error: `All ${cov.total} routes are already booked for ${meal} on this date.` });
+    }
+    const assignedUnitId = chosenUnit.id;
 
     // Booker's entered items (accompaniments are ignored if sent — derived below).
     const allDishes = await prisma.dish.findMany({ where: { bookable: true } });
@@ -171,11 +191,11 @@ export default async function orderRoutes(app: FastifyInstance) {
       await notifyRoles(["KITCHEN_ADMIN", "SUPER_ADMIN"], {
         type: "ORDER_PLACED",
         title: "New booking",
-        body: `${freeUnit.name} · ${SES_LABEL[b.session] ?? b.session} · ${order.totalPlates ?? 0} plates`,
+        body: `${chosenUnit.name} · ${SES_LABEL[b.session] ?? b.session} · ${order.totalPlates ?? 0} plates`,
         section: "orders",
         orderId: order.id,
       });
-      return { ...order, assignedUnit: freeUnit.name, booked: after.booked, total: after.total };
+      return { ...order, assignedUnit: chosenUnit.name, booked: after.booked, total: after.total };
     } catch (e: any) {
       if (e.code === "P2002")
         return reply.code(409).send({ error: "That kitchen is already booked for this session." });
