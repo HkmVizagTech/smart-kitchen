@@ -1,0 +1,9 @@
+# Railway / Nixpacks build config for the API service.
+# We override the install step so a lockfile that's slightly behind
+# package.json (e.g. after adding Capacitor to the frontend apps) does
+# not fail the build. Build + start come from railway.json.
+[phases.install]
+cmds = [
+  "npm install -g corepack@0.24.1 && corepack enable",
+  "pnpm install --no-frozen-lockfile"
+]

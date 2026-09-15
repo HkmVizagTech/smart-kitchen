@@ -1,0 +1,33 @@
+{
+  "name": "smart-kitchen",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Smart Kitchen Indent & Packing Management System",
+  "scripts": {
+    "db:generate": "pnpm --filter @sk/db generate",
+    "db:push": "pnpm --filter @sk/db push",
+    "db:reset": "pnpm --filter @sk/db reset",
+    "db:seed": "pnpm --filter @sk/db seed",
+    "db:studio": "pnpm --filter @sk/db studio",
+    "api:dev": "pnpm --filter @sk/api dev",
+    "api:start": "pnpm --filter @sk/api start",
+    "admin": "pnpm --filter @sk/admin dev",
+    "kitchen": "pnpm --filter @sk/kitchen dev",
+    "verification": "pnpm --filter @sk/verification dev",
+    "book": "pnpm --filter @sk/booking-web dev",
+    "web": "concurrently -n api,booking,kitchen,verify,admin -c yellow,blue,magenta,cyan,green \"pnpm api:dev\" \"pnpm book\" \"pnpm kitchen\" \"pnpm verification\" \"pnpm admin\""
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "tsx": "^4.16.2",
+    "@types/node": "^20.14.12",
+    "concurrently": "^8.2.2"
+  },
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "serve": "^14.2.3"
+  }
+}

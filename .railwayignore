@@ -1,0 +1,16 @@
+node_modules
+**/node_modules
+dist
+**/dist
+build
+**/build
+android
+**/android
+ios
+**/ios
+.expo
+**/.expo
+apk-out
+**/*.apk
+.git
+.DS_Store

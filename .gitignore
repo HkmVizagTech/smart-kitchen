@@ -1,0 +1,30 @@
+# --- secrets: never commit these ---
+.env
+.env.*
+!.env.example
+*.local.md
+SECRETS*
+
+# --- dependencies & build output ---
+node_modules/
+.pnpm-store/
+dist/
+build/
+generated/
+packages/db/src/generated/
+
+# --- native build artefacts (regenerate with build-android.sh) ---
+android/
+ios/
+.expo/
+apk-out/
+*.apk
+
+# --- noise ---
+*.log
+.DS_Store
+Thumbs.db
+
+# --- spreadsheets are data, not source; reference copies live in docs/ ---
+*.xlsx
+!docs/**/*.xlsx

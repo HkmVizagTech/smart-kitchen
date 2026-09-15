@@ -1,0 +1,24 @@
+{
+  "name": "@sk/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node ../../scripts/with-env.mjs tsx watch src/server.ts",
+    "start": "node ../../scripts/with-env.mjs tsx src/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fastify/cors": "^9.0.1",
+    "@sk/db": "workspace:*",
+    "@sk/logic": "workspace:*",
+    "bcryptjs": "^2.4.3",
+    "exceljs": "^4.4.0",
+    "fastify": "^4.28.1"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.4"
+  }
+}

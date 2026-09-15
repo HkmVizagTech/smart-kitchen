@@ -1,0 +1,27 @@
+{
+  "name": "@sk/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "generate": "prisma generate",
+    "push": "node ../../scripts/with-env.mjs prisma db push",
+    "reset": "node ../../scripts/with-env.mjs prisma db push --force-reset --accept-data-loss",
+    "seed": "node ../../scripts/with-env.mjs tsx prisma/seed.ts",
+    "studio": "node ../../scripts/with-env.mjs prisma studio"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.18.0",
+    "bcryptjs": "^2.4.3"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "prisma": "^5.18.0",
+    "tsx": "^4.16.2"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  }
+}

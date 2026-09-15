@@ -1,0 +1,270 @@
+// Smart Kitchen — data model
+// Reflects decisions: menu same every week (no rotation), lunch is count-only
+// (no menu), no invoices/payments in platform, roles = booking / kitchen /
+// kitchen_admin / super_admin. Tiffin & dinner ordered today-for-tomorrow;
+// lunch ordered same-day before 11:00 AM; emergency = count only.
+
+generator client {
+  provider      = "prisma-client-js"
+  // "native" = the machine that runs `prisma generate` (your Mac);
+  // the linux target keeps Railway deploys working too.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ----------------------------------------------------------------- enums
+enum Role {
+  BOOKING // outsider who places orders; tied to one kitchen section
+  KITCHEN_ADMIN // cook / pack / dispatch — sees packing sheets
+  VERIFICATION_ADMIN // verifies consumption + feedback, handles payments → unlocks reorder
+  SUPER_ADMIN // everything + assign roles
+}
+
+enum DishUnit {
+  NOS // counted (e.g. idly, wada)
+  G // grams
+}
+
+enum Session {
+  BREAKFAST
+  LUNCH
+  DINNER
+}
+
+enum Day {
+  MON
+  TUE
+  WED
+  THU
+  FRI
+  SAT
+  SUN
+}
+
+enum VesselSession {
+  MORNING
+  EVENING
+}
+
+enum OrderStatus {
+  PLACED
+  PREPARING
+  DISPATCHED
+  DELIVERED
+  CLOSED // consumption + feedback submitted and verified
+}
+
+enum ConsumptionStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+// Booking groups for tiffin/dinner. Each dish belongs to one group.
+enum DishGroup {
+  ITEM1
+  ITEM2
+  ITEM3
+}
+
+// ----------------------------------------------------------------- core
+model Unit {
+  id          Int     @id @default(autoincrement())
+  name        String  @unique // Unit-1 … Unit-4, Visakha, Others
+  memberCount Int     @default(0)
+  isOptional  Boolean @default(false) // e.g. "Others"
+  users       User[]
+  orders      Order[]
+}
+
+model User {
+  id           Int     @id @default(autoincrement())
+  role         Role
+  // credentials — log in with any of username / email / phone + password
+  username     String  @unique
+  passwordHash String
+  email        String? @unique
+  phone        String? @unique
+  // profile / record
+  name         String // full name
+  photo        String? // data URL (base64) of profile photo
+  iskconRole   String? // service / designation in ISKCON
+  centre       String? // centre / organization
+  address      String?
+  active       Boolean @default(true)
+  deletedAt    DateTime? // soft-delete: hidden from lists, cannot sign in
+  createdAt    DateTime @default(now())
+
+  unitId   Int? // legacy; bookers are no longer tied to a unit
+  unit     Unit?   @relation(fields: [unitId], references: [id])
+  bookings Order[] // orders this booker placed
+  notifications Notification[]
+
+  @@index([role])
+}
+
+// Self-hosted OTA: each row is a built web bundle (zip) for one app version.
+model AppBundle {
+  id        Int      @id @default(autoincrement())
+  app       String // booking | kitchen | verification | admin
+  version   String
+  data      Bytes // the zipped dist/ contents
+  createdAt DateTime @default(now())
+
+  @@index([app, createdAt])
+}
+
+// In-app notifications (one row per recipient — role events are fanned out).
+model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  type      String // ORDER_PLACED | STATUS | DELIVERED | CLOSEOUT_SUBMITTED | VERIFIED | REJECTED
+  title     String
+  body      String
+  section   String // which app view to open: orders | close | mine | verify | payments | dashboard
+  orderId   Int?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
+}
+
+// A single food component, with its per-plate amounts.
+// qtyPerPlate/unit = what's shown on the menu card.
+// packingFactor    = grams (or count) per plate used for the cooking quantity.
+// packingVesselKg  = vessel size for weight dishes (null for counted dishes).
+// A bookable dish. Booker enters a plate count per dish.
+// group     = which booking group it shows under (Item 1 / 2 / 3).
+// bookable  = whether it appears in the booking screen.
+// packingFactor   = grams (or pieces) per plate for the cooking quantity.
+// packingVesselKg = vessel size for weight dishes (null => counted dish, uses VesselSize).
+model Dish {
+  id              Int       @id @default(autoincrement())
+  name            String    @unique
+  group           DishGroup @default(ITEM2)
+  bookable        Boolean   @default(true)
+  // Accompaniment (e.g. Sambar, FG Chutney, Chutney): NOT entered by the booker.
+  // Its plate count is auto-derived = sum of the Item 1 + Item 3 solid dishes.
+  accompaniment   Boolean   @default(false)
+  sortOrder       Int       @default(0)
+  qtyPerPlate     Float     @default(0)
+  unit            DishUnit  @default(G)
+  packingFactor   Float     @default(0)
+  packingVesselKg Float? // null => counted dish (uses VesselSize)
+
+  orderItems       OrderItem[]
+  consumptionItems ConsumptionItem[]
+}
+
+// Configurable counted-vessel sizes per session (idly/wada).
+model VesselSize {
+  id      Int           @id @default(autoincrement())
+  session VesselSession
+  size    Int
+
+  @@unique([session, size])
+}
+
+// ----------------------------------------------------------------- orders
+model Order {
+  id          Int         @id @default(autoincrement())
+  unit        Unit        @relation(fields: [unitId], references: [id])
+  unitId      Int
+  date        DateTime // the day the food is FOR
+  session     Session
+  isEmergency Boolean     @default(false)
+  bookedBy    User?       @relation(fields: [bookedById], references: [id])
+  bookedById  Int? // which booking person placed it
+
+  // tiffin / dinner: per-dish line items (Item 1/2/3 dishes, each with a count)
+  items       OrderItem[]
+  totalPlates Int? // sum of all line-item plates
+
+  // lunch / emergency: just a headcount, no line items
+  peopleCount Int?
+
+  status      OrderStatus  @default(PLACED)
+  createdAt   DateTime     @default(now())
+
+  consumption Consumption?
+  feedback    Feedback?
+
+  @@unique([unitId, date, session])
+  @@index([date, session])
+}
+
+// One line of an order: a dish + its plate count.
+model OrderItem {
+  id      Int   @id @default(autoincrement())
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId Int
+  dish    Dish  @relation(fields: [dishId], references: [id])
+  dishId  Int
+  plates  Int
+
+  @@unique([orderId, dishId])
+}
+
+// Architecture box #3 — Unit Consumption Submission.
+// Quantities are in plates for the session (received / consumed / leftover).
+model Consumption {
+  id           Int               @id @default(autoincrement())
+  order        Order             @relation(fields: [orderId], references: [id])
+  orderId      Int               @unique
+  receivedQty  Int // total ordered plates (main items)
+  consumedQty  Int // total consumed plates
+  leftoverQty  Int // total leftover = ordered - consumed
+  notes        String?
+  status       ConsumptionStatus @default(PENDING)
+  verifiedBy   Int? // User id of verification admin
+  verifiedAt   DateTime?
+  createdAt    DateTime          @default(now())
+  items        ConsumptionItem[] // per main-item ordered vs consumed
+}
+
+// Per main item (idly, wada, rice, biryani…) ordered vs consumed plates.
+model ConsumptionItem {
+  id            Int         @id @default(autoincrement())
+  consumption   Consumption @relation(fields: [consumptionId], references: [id], onDelete: Cascade)
+  consumptionId Int
+  dish          Dish        @relation(fields: [dishId], references: [id])
+  dishId        Int
+  ordered       Int
+  consumed      Int
+
+  @@unique([consumptionId, dishId])
+}
+
+// Architecture box #5 — Feedback Submission (after verification).
+model Feedback {
+  id        Int      @id @default(autoincrement())
+  order     Order    @relation(fields: [orderId], references: [id])
+  orderId   Int      @unique
+  taste     Int // 1..5
+  quality   Int // 1..5
+  remarks   String?
+  createdAt DateTime @default(now())
+}
+
+// Record of a generated packing sheet (the downloadable Excel).
+model PackingSheet {
+  id          Int           @id @default(autoincrement())
+  date        DateTime
+  vesselSes   VesselSession
+  generatedAt DateTime      @default(now())
+  fileUrl     String?
+
+  @@unique([date, vesselSes])
+}
+
+// Simple key/value settings (e.g. lunch deadline).
+model Setting {
+  key   String @id
+  value String
+}
