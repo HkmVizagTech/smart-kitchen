@@ -113,7 +113,10 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (!b.username || !b.password || !b.name || !b.role)
       return reply.code(422).send({ error: "Name, role, username and a temporary password are required." });
     if (!ROLES.includes(b.role)) return reply.code(422).send({ error: "Unknown role." });
-    if (b.password.length < 6) return reply.code(422).send({ error: "Password must be at least 6 characters." });
+    // Same minimum as self-signup — an admin-created account should not be the
+    // weaker path into the system.
+    if (b.password.length < 8)
+      return reply.code(422).send({ error: "Password must be at least 8 characters." });
     try {
       const u = await prisma.user.create({
         data: {
@@ -172,8 +175,8 @@ export default async function adminRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string }; Body: { password: string } }>(
     "/admin/users/:id/reset-password",
     async (req, reply) => {
-      if (!req.body.password || req.body.password.length < 6)
-        return reply.code(422).send({ error: "Password must be at least 6 characters." });
+      if (!req.body.password || req.body.password.length < 8)
+        return reply.code(422).send({ error: "Password must be at least 8 characters." });
       await prisma.user.update({
         where: { id: Number(req.params.id) },
         data: { passwordHash: await bcrypt.hash(req.body.password, 10) },
