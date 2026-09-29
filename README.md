@@ -6,8 +6,8 @@ auto-generated Excel turning those plates into cookable quantities and vessel
 counts; after delivery each route reports consumption and a verification team
 signs it off, which unlocks that route's next booking.
 
-> **New here?** Read [`docs/HANDOVER.md`](docs/HANDOVER.md) first — it explains
-> the whole system, the Railway layout and the domain rules in one pass.
+> **New here?** Read [`docs/HANDOVER.md`](docs/HANDOVER.md) first — what the
+> system does, how it is deployed, and the domain rules, in one pass.
 
 ---
 
