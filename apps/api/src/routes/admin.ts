@@ -30,6 +30,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       packingVesselKg?: number | null;
       group?: "ITEM1" | "ITEM2" | "ITEM3";
       bookable?: boolean;
+      ratePerPlate?: number | null;
     };
   }>("/admin/dishes/:id", async (req) => {
     const id = Number(req.params.id);
@@ -43,6 +44,9 @@ export default async function adminRoutes(app: FastifyInstance) {
         packingVesselKg: b.packingVesselKg,
         group: b.group,
         bookable: b.bookable,
+        // Null is meaningful here — it means "charge the default rate" — so an
+        // explicit null must be written through rather than treated as absent.
+        ...(b.ratePerPlate !== undefined ? { ratePerPlate: b.ratePerPlate } : {}),
       },
     });
   });

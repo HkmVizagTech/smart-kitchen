@@ -6,8 +6,10 @@ auto-generated Excel turning those plates into cookable quantities and vessel
 counts; after delivery each route reports consumption and a verification team
 signs it off, which unlocks that route's next booking.
 
-> **New here?** Read [`docs/HANDOVER.md`](docs/HANDOVER.md) first — what the
-> system does, how it is deployed, and the domain rules, in one pass.
+> **New here?** Read [`docs/PROJECT_OVERVIEW.md`](docs/PROJECT_OVERVIEW.md)
+> first — what the system does, how it is deployed, what has been fixed and what
+> is still open, in plain language. [`docs/HANDOVER.md`](docs/HANDOVER.md) goes
+> deeper on the domain rules and the code.
 
 ---
 
@@ -92,6 +94,24 @@ config file supplies them.
 Optional: `APP_TIMEZONE` (default `Asia/Kolkata`), `TOKEN_TTL_DAYS` (default 30),
 `SELF_SIGNUP_ROLES` (default `BOOKING` — never add `SUPER_ADMIN`).
 
+### Schema changes
+
+There are no migration files — the schema is applied with `prisma db push`.
+The build command does **not** run it, so after any change to
+`packages/db/prisma/schema.prisma` you must push it to the live database once,
+before or at the same time as the deploy, or the API will query columns that do
+not exist yet:
+
+```bash
+# from your machine, pointed at the PRODUCTION database
+DATABASE_URL="<the Postgres service's DATABASE_URL>" pnpm db:push
+```
+
+Take the URL from Railway → **Postgres** → Variables. `db push` only adds what
+is missing; the September 2026 additions (`Dish.ratePerPlate`,
+`Consumption.rejectionReason`, `Consumption.amount`) are all nullable, so
+nothing is rewritten and no data is lost.
+
 ### Deploying
 
 Both services are connected to this repo, so a push to `main` deploys them.
@@ -122,7 +142,13 @@ Super Admin from the admin console.
 
 - **Tiffin & dinner** are ordered today for tomorrow. **Lunch** is same-day
   before 11:00 IST and is headcount-only. Rules live in `packages/logic/src/windows.ts`.
-- **Reorder gate:** a route with any order not yet `CLOSED` cannot book again.
+- **Reorder gate:** a booker's *first* order of a meal is free; every one after
+  that needs the previous order in **that same meal** closed out — consumption
+  **and** feedback. Enforced in `POST /orders`; the New Booking screen reads
+  `GET /me/booking-status` so a booker is told before filling the form. Tiffin,
+  lunch and dinner are separate chains, close-out (not verification) releases
+  the hold, and emergency orders are exempt. There is also an older *per-route*
+  gate (`GET /units/:id/can-order`) which remains advisory.
 - **Routes are auto-assigned** — an order goes to the first of the six routes
   with nothing booked for that date and session. Bookers do not pick.
 - **Accompaniments** (sambar, chutney) are never booked; their plate count is

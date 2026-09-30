@@ -61,8 +61,9 @@ in `apps/api/src/guard.ts`, because the nav only controls what is *shown*.
 - **One role per user.** The schema keeps a single `role` column. Someone who
   needs two jobs gets two accounts. Revisit before the user table fills up —
   it's a schema change (`role` → a list) plus a guard change.
-- **One Railway service.** `railway.web.json` replaces the four
-  `railway.{admin,booking,kitchen,verify}.json` configs.
+- **One Railway service.** The four `railway.{admin,booking,kitchen,verify}.json`
+  configs are gone; the web service's commands live in the dashboard (see
+  Deploying below).
 - **Web only.** The Capacitor OTA update bar was removed — it only ever did
   anything inside a native APK, and pulling it out dropped two dependencies.
   The four existing APKs are untouched and now stale; they still point at the

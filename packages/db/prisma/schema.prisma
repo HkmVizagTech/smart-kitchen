@@ -157,6 +157,11 @@ model Dish {
   unit            DishUnit  @default(G)
   packingFactor   Float     @default(0)
   packingVesselKg Float? // null => counted dish (uses VesselSize)
+  // What one consumed plate of this dish is charged at. Null means "use the
+  // ratePerPlate setting" — most kitchens want one blanket rate and only a few
+  // dishes priced separately, so this stays optional rather than defaulting
+  // every dish to zero.
+  ratePerPlate    Float?
 
   orderItems       OrderItem[]
   consumptionItems ConsumptionItem[]
@@ -226,6 +231,16 @@ model Consumption {
   verifiedAt   DateTime?
   createdAt    DateTime          @default(now())
   items        ConsumptionItem[] // per main-item ordered vs consumed
+
+  // Why a close-out was sent back. Without it the booker only saw "please
+  // review and resubmit" and had to guess what was wrong.
+  rejectionReason String?
+
+  // What this meal is owed, in rupees: consumed plates x the dish's rate.
+  // Frozen at the moment of approval rather than computed on demand, so
+  // editing a dish rate next month cannot silently rewrite what was already
+  // agreed and paid.
+  amount       Float?
 }
 
 // Per main item (idly, wada, rice, biryani…) ordered vs consumed plates.

@@ -37,7 +37,7 @@ export function Dishes() {
   const [savingId, setSavingId] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
 
-  function set(id: number, key: "qtyPerPlate" | "packingFactor" | "packingVesselKg", value: string) {
+  function set(id: number, key: "qtyPerPlate" | "packingFactor" | "packingVesselKg" | "ratePerPlate", value: string) {
     setEdits((e) => ({ ...e, [id]: { ...e[id], [key]: value === "" ? null : Number(value) } }));
   }
   async function save(d: Dish) {
@@ -65,7 +65,10 @@ export function Dishes() {
       <div className="between page-head">
         <div>
           <h1>Dishes</h1>
-          <p className="muted">Groups, menu quantities and packing factors. Vessel kg is blank for counted items.</p>
+          <p className="muted">
+            Groups, menu quantities, packing factors and rates. Vessel kg is blank for counted
+            items; a blank rate charges the default set under Settings.
+          </p>
         </div>
         <button className="btn" onClick={() => setAdding(true)}>
           <i className="ti ti-plus" aria-hidden="true"></i> Add Dish
@@ -114,6 +117,14 @@ export function Dishes() {
                   <div className="ef narrow">
                     <label>Packing factor</label>
                     <input className="ctrl" defaultValue={d.packingFactor} onChange={(e) => set(d.id, "packingFactor", e.target.value)} />
+                  </div>
+                  <div className="ef narrow">
+                    <label>Rate / plate</label>
+                    <div className="inp-unit">
+                      <span className="u pre">₹</span>
+                      <input className="ctrl" defaultValue={d.ratePerPlate ?? ""} placeholder="default"
+                        onChange={(e) => set(d.id, "ratePerPlate", e.target.value)} />
+                    </div>
                   </div>
                   <div className="ef narrow">
                     <label>Vessel kg</label>
@@ -600,9 +611,15 @@ export function Settings() {
   const { data, error, loading, reload } = useAsync(() => api.settings());
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState("");
-  const FIELDS: [string, string, string][] = [
+  const FIELDS: [string, string, string, string?][] = [
     ["org_name", "Organization name", "Akshaya Patra Kitchen"],
     ["lunch_deadline", "Lunch booking cutoff (HH:MM)", "11:00"],
+    [
+      "ratePerPlate",
+      "Default rate per plate (₹)",
+      "0",
+      "Charged for every consumed plate whose dish has no rate of its own. Changing it affects meals verified from now on — amounts already approved are frozen.",
+    ],
   ];
   async function save(key: string) {
     try { await api.saveSetting(key, edits[key] ?? ""); setMsg("Saved " + key); reload(); }
@@ -615,23 +632,24 @@ export function Settings() {
       <h1>Settings</h1>
       <div className="card">
         <div className="section-title">Organization</div>
-        {FIELDS.map(([key, label, ph]) => (
-          <div key={key} style={{ marginTop: 12 }}>
+        {FIELDS.map(([key, label, ph, help]) => (
+          <div key={key} style={{ marginTop: 14 }}>
             <label className="lab">{label}</label>
             <div className="row">
               <input defaultValue={data![key] ?? ""} placeholder={ph}
                 onChange={(e) => setEdits((s) => ({ ...s, [key]: e.target.value }))} style={{ maxWidth: 320 }} />
               <button className="btn sm" onClick={() => save(key)} disabled={edits[key] === undefined}>Save</button>
             </div>
+            {help && <p className="muted" style={{ margin: "6px 0 0", fontSize: 12.5, maxWidth: 560 }}>{help}</p>}
           </div>
         ))}
         {msg && <div className="ok">{msg}</div>}
       </div>
       <div className="card">
         <div className="section-title">Catalog & rules</div>
-        <p className="muted">Dishes, packing factors, vessel sizes and the weekly menu are managed under
-          the <b>Dishes</b> and <b>Vessels</b> tabs. Branding logo: drop <code>logo.png</code> in each app's
-          public folder.</p>
+        <p className="muted">Dishes, packing factors, per-dish rates and vessel sizes are managed under
+          the <b>Dishes</b> and <b>Vessels</b> tabs. To use your own logo, drop <code>logo.png</code> into
+          the web app's public folder.</p>
       </div>
     </div>
   );

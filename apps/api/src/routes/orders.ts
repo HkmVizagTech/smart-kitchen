@@ -127,6 +127,28 @@ export default async function orderRoutes(app: FastifyInstance) {
         });
     }
 
+    // The reorder gate. First order of a meal is free; after that the previous
+    // one must be closed out.
+    if (!b.isEmergency) {
+      const blocked = await blockingOrder(bookedById, b.session);
+      if (blocked) {
+        const when = blocked.order.date.toISOString().slice(0, 10);
+        return reply.code(409).send({
+          error:
+            `Close out your previous ${SES_LABEL[b.session] ?? b.session} first ` +
+            `(${blocked.order.unit.name}, ${when}) — ${blocked.needs.join(" and ")} still needed. ` +
+            `Open "Close a Meal" to finish it, then book again.`,
+          blockedBy: {
+            orderId: blocked.order.id,
+            unit: blocked.order.unit.name,
+            date: blocked.order.date,
+            session: blocked.order.session,
+            needs: blocked.needs,
+          },
+        });
+      }
+    }
+
     // Pick the route: the booker's choice if they made one, otherwise the next
     // free one.
     const cov = await coverage(forDate, b.session);
@@ -203,6 +225,71 @@ export default async function orderRoutes(app: FastifyInstance) {
     }
   });
 
+
+  // ---------------------------------------------------------------- the gate
+  //
+  // A booker may place their FIRST order for a meal freely. Every order after
+  // that requires the previous one in the same meal to be closed out —
+  // consumption submitted AND feedback submitted. That is the loop the whole
+  // system exists to enforce, and until now it was only *reported* by
+  // /units/:id/can-order; nothing stopped a client that simply did not ask.
+  //
+  // Two deliberate limits on how strict this is:
+  //
+  //   Per MEAL, not across meals. Tiffin and dinner are separate chains. A
+  //   shared gate would deadlock: you book tiffin + dinner for tomorrow, close
+  //   out tiffin in the morning, and dinner is not delivered until evening — so
+  //   you could not book the next day's tiffin before the cutoff.
+  //
+  //   Close-out, not verification. Requiring an approved verification would put
+  //   the verification team on the critical path of every booking; miss it
+  //   before the cutoff and that route cannot order. Verification still gates
+  //   nothing here — it remains the finance/accuracy step downstream.
+  //
+  // Emergency orders are exempt, by definition.
+  async function blockingOrder(bookedById: number, session: string) {
+    const open = await prisma.order.findFirst({
+      where: {
+        bookedById,
+        session: session as any,
+        isEmergency: false,
+        OR: [{ consumption: { is: null } }, { feedback: { is: null } }],
+      },
+      include: { unit: true, consumption: true, feedback: true },
+      orderBy: { date: "asc" },
+    });
+    if (!open) return null;
+    const needs: string[] = [];
+    if (!open.consumption) needs.push("consumption");
+    if (!open.feedback) needs.push("feedback");
+    return { order: open, needs };
+  }
+
+
+  // Per-meal booking status for the signed-in booker: what they may book right
+  // now, and what is blocking anything they may not. The New Booking screen
+  // reads this so a booker is told up front rather than after filling a form.
+  app.get("/me/booking-status", { preHandler: requireAuth }, async (req) => {
+    const me = must(req);
+    const sessions = ["BREAKFAST", "LUNCH", "DINNER"] as const;
+    const out: Record<string, unknown> = {};
+    for (const session of sessions) {
+      const blocked = await blockingOrder(me.userId, session);
+      out[session] = blocked
+        ? {
+            canOrder: false,
+            blockedBy: {
+              orderId: blocked.order.id,
+              unit: blocked.order.unit.name,
+              date: blocked.order.date,
+              needs: blocked.needs,
+            },
+          }
+        : { canOrder: true, blockedBy: null };
+    }
+    return out;
+  });
+
   // Kitchen coverage for a date+session: which of the 6 kitchens are booked.
   async function coverage(date: Date, session: string) {
     const units = await prisma.unit.findMany({ orderBy: { id: "asc" } });
@@ -222,8 +309,14 @@ export default async function orderRoutes(app: FastifyInstance) {
     async (req) => coverage(new Date(req.query.date), req.query.session)
   );
 
-  // Recent orders across all kitchens (for the booker's "My Bookings").
-  app.get("/bookings/recent", { preHandler: requireAuth }, async () => {
+  // Recent orders across all kitchens.
+  //
+  // This returns EVERY booker's orders, not just the caller's — the kitchen and
+  // admin screens want the whole picture. The row therefore carries who placed
+  // it, so a client showing "My Bookings" can filter, and so the booking screen
+  // can offer to repeat the caller's OWN last order rather than a stranger's.
+  app.get("/bookings/recent", { preHandler: requireAuth }, async (req) => {
+    const me = must(req).userId;
     const orders = await prisma.order.findMany({
       include: { unit: true, items: { include: { dish: true } }, consumption: true, feedback: true },
       orderBy: [{ date: "desc" }, { id: "desc" }],
@@ -240,7 +333,18 @@ export default async function orderRoutes(app: FastifyInstance) {
       items: o.items.map((it) => ({ dish: it.dish.name, plates: it.plates })),
       status: o.status,
       consumptionStatus: o.consumption?.status ?? null,
-      needsCloseOut: !o.consumption || !o.feedback,
+      // Why it was sent back, so the booker can fix the right thing.
+      rejectionReason: o.consumption?.rejectionReason ?? null,
+      amount: o.consumption?.amount ?? null,
+      // A returned close-out needs work again. Without the REJECTED case the
+      // booker was notified that verification had sent it back, and then could
+      // not find it anywhere: the consumption row existed, so this said false
+      // and the order dropped off both the "needs close-out" list and the
+      // close-out picker.
+      needsCloseOut:
+        !o.consumption || !o.feedback || o.consumption.status === "REJECTED",
+      bookedById: o.bookedById,
+      mine: o.bookedById === me,
     }));
   });
 
@@ -264,14 +368,44 @@ export default async function orderRoutes(app: FastifyInstance) {
   app.get<{ Params: { id: string } }>("/orders/:id/closeout-items", { preHandler: requireAuth }, async (req, reply) => {
     const order = await prisma.order.findUnique({
       where: { id: Number(req.params.id) },
-      include: { items: { include: { dish: true } }, unit: true },
+      include: {
+        items: { include: { dish: true } },
+        unit: true,
+        consumption: { include: { items: true } },
+        feedback: true,
+      },
     });
     if (!order) return reply.code(404).send({ error: "Order not found." });
+    // Anything already submitted comes back with the items, so a close-out that
+    // was returned for a correction is re-opened with the previous numbers in
+    // place. Retyping every line to fix one of them is how a booker ends up
+    // introducing a second mistake.
+    const before = new Map((order.consumption?.items ?? []).map((c) => [c.dishId, c.consumed]));
     const items = order.items
       .filter((it) => !it.dish.accompaniment)
-      .map((it) => ({ dishId: it.dishId, name: it.dish.name, ordered: it.plates }))
+      .map((it) => ({
+        dishId: it.dishId,
+        name: it.dish.name,
+        ordered: it.plates,
+        consumed: before.has(it.dishId) ? before.get(it.dishId)! : null,
+      }))
       .sort((a, b) => a.name.localeCompare(b.name));
-    return { orderId: order.id, unit: order.unit.name, session: order.session, items };
+    return {
+      orderId: order.id,
+      unit: order.unit.name,
+      session: order.session,
+      items,
+      previous: order.consumption
+        ? {
+            status: order.consumption.status,
+            notes: order.consumption.notes,
+            rejectionReason: order.consumption.rejectionReason,
+            taste: order.feedback?.taste ?? null,
+            quality: order.feedback?.quality ?? null,
+            remarks: order.feedback?.remarks ?? null,
+          }
+        : null,
+    };
   });
 
   // Submit consumption (per main item) + mandatory feedback.
@@ -314,7 +448,13 @@ export default async function orderRoutes(app: FastifyInstance) {
       if (existing) await tx.consumptionItem.deleteMany({ where: { consumptionId: existing.id } });
       const cons = await tx.consumption.upsert({
         where: { orderId: b.orderId },
-        update: { receivedQty, consumedQty, leftoverQty, notes: b.notes, status: "PENDING" },
+        // Resubmitting clears the previous rejection reason — it described the
+        // version that was sent back, and leaving it would make a corrected
+        // close-out still look rejected.
+        update: {
+          receivedQty, consumedQty, leftoverQty, notes: b.notes,
+          status: "PENDING", rejectionReason: null,
+        },
         create: { orderId: b.orderId, receivedQty, consumedQty, leftoverQty, notes: b.notes },
       });
       await tx.consumptionItem.createMany({
@@ -458,24 +598,61 @@ export default async function orderRoutes(app: FastifyInstance) {
       date: c.order.date,
       consumed: c.consumedQty,
       verifiedAt: c.verifiedAt,
+      // Frozen at approval — see amountFor().
+      amount: c.amount,
     }));
   });
 
+  // What a close-out is worth: consumed plates x the dish's rate, falling back
+  // to the blanket `ratePerPlate` setting for any dish without its own.
+  //
+  // Only main items carry a ConsumptionItem, so accompaniments are never
+  // charged — which matches how they are ordered, i.e. not at all.
+  async function amountFor(orderId: number): Promise<number | null> {
+    const cons = await prisma.consumption.findUnique({
+      where: { orderId },
+      include: { items: { include: { dish: true } } },
+    });
+    if (!cons) return null;
+    const setting = await prisma.setting.findUnique({ where: { key: "ratePerPlate" } });
+    const fallback = Number(setting?.value ?? 0) || 0;
+    const total = cons.items.reduce(
+      (sum, it) => sum + it.consumed * (it.dish.ratePerPlate ?? fallback),
+      0
+    );
+    return Math.round(total * 100) / 100;
+  }
+
   // Verification (verification admin) -> closes the order and unlocks reorder.
-  app.post<{ Body: { orderId: number; verifiedBy?: number; approve: boolean } }>(
+  app.post<{ Body: { orderId: number; verifiedBy?: number; approve: boolean; reason?: string } }>(
     "/orders/verify",
     { preHandler: requireRole("VERIFICATION_ADMIN") },
     async (req, reply) => {
       const { orderId, approve } = req.body;
+      const reason = (req.body.reason ?? "").trim();
       // Who verified is taken from the signed-in session. It used to come from
       // the request body, so any caller could attribute a verification to
       // anyone — or to a user id that did not exist.
       const verifiedBy = must(req).userId;
       const cons = await prisma.consumption.findUnique({ where: { orderId } });
       if (!cons) return reply.code(404).send({ error: "No consumption submitted yet." });
+
+      // Returning a close-out without saying why leaves the booker guessing at
+      // what to change, so the reason is required on a rejection.
+      if (!approve && reason.length < 3)
+        return reply.code(422).send({ error: "Say why it is being returned, so the booker knows what to fix." });
+
+      const amount = approve ? await amountFor(orderId) : null;
+
       await prisma.consumption.update({
         where: { orderId },
-        data: { status: approve ? "VERIFIED" : "REJECTED", verifiedBy, verifiedAt: new Date() },
+        data: {
+          status: approve ? "VERIFIED" : "REJECTED",
+          verifiedBy,
+          verifiedAt: new Date(),
+          rejectionReason: approve ? null : reason,
+          ...(approve ? { amount } : {}),
+        },
       });
       if (approve) await prisma.order.update({ where: { id: orderId }, data: { status: "CLOSED" } });
       // Notify the booker of the verification outcome.
@@ -484,9 +661,9 @@ export default async function orderRoutes(app: FastifyInstance) {
         const where = `${order.unit.name} · ${SES_LABEL[order.session] ?? order.session}`;
         await notifyUsers([order.bookedById], approve
           ? { type: "VERIFIED", title: "Meal verified ✓", body: `${where} is verified and closed. You can place your next order.`, section: "mine", orderId }
-          : { type: "REJECTED", title: "Close-out returned", body: `${where} close-out was returned — please review and resubmit.`, section: "close", orderId });
+          : { type: "REJECTED", title: "Close-out returned", body: `${where} — ${reason}`, section: "close", orderId });
       }
-      return { ok: true };
+      return { ok: true, amount };
     }
   );
 }

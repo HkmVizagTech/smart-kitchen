@@ -113,17 +113,48 @@ Most behaviour people will complain about lives in three small places:
   **no approval endpoint was ever built**, so an emergency order goes straight through.
 
 ### The reorder gate
-A route with any order not yet `CLOSED` cannot book again. The blocking reason is computed
-live and shown as text — *"await delivery + submit consumption + submit feedback + await
-verification"*. If a route gets stuck, look here: an order delivered but never closed out
-will lock that route indefinitely.
+This is the loop the whole system exists to enforce: **order → eat → report what was
+consumed → rate it → only then order again.**
 
-### Routes are auto-assigned, not chosen ⚠️
-The least obvious behaviour in the codebase. When someone books, the API **ignores who
-they are** and assigns the order to *the first of the six routes that has no order yet for
-that date and session*. Six bookings fill all six routes; the seventh is rejected with
-*"All 6 kitchens are already booked."* A booker cannot say "this is for Unit-3."
-If routes are meant to map to real hostels or units, this needs changing before go-live.
+A booker's *first* order of a meal is free. Every order after that is refused with `409`
+until the previous order **in that same meal** has been closed out — consumption submitted
+**and** feedback submitted. The refusal names the order, the route, the date and what is
+still missing, and `GET /me/booking-status` returns the same answer per meal so the New
+Booking screen can grey out a meal before anyone fills in a form.
+
+Three things about how strict it is, each deliberate:
+
+- **Per meal, not across meals.** Tiffin, lunch and dinner are separate chains. A shared
+  gate deadlocks: book tiffin + dinner for tomorrow, close out tiffin in the morning, and
+  dinner is not delivered until evening — so you could not book the next day's tiffin
+  before the cutoff.
+- **Close-out, not verification.** Requiring an *approved* verification would put the
+  verification team on the critical path of every booking; miss it before the cutoff and
+  that booker cannot order. Verification stays downstream, as the finance/accuracy step.
+- **Emergency orders are exempt**, and an emergency order never becomes the thing blocking
+  someone's next booking.
+
+Where it lives: `blockingOrder()` in `apps/api/src/routes/orders.ts`, enforced in
+`POST /orders` and reported by `GET /me/booking-status`.
+
+There is also an **older per-route gate**, `GET /units/:id/can-order` — "this route has an
+order not yet `CLOSED`". It is still there and the kitchen screens read it, but it is
+**advisory only**: nothing refuses an order because of it. If a route looks stuck, that is
+this gate, and it clears when the order is verified.
+
+⚠️ **An order left open blocks its booker forever.** Before switching the gate on in a live
+database, find them — `SELECT id, "unitId", date, session, "bookedById" FROM "Order" o
+WHERE NOT EXISTS (SELECT 1 FROM "Consumption" c WHERE c."orderId" = o.id)` — and either
+close them out or delete them.
+
+### Routes are auto-assigned, but the booker can change it
+When someone books without naming a route, the API assigns the order to *the first of the
+six routes that has no order yet for that date and session*. Six bookings fill all six
+routes; the seventh is rejected with *"All 6 routes are already booked."*
+
+Since September 2026 a booker may also send `unitId` to pick a route themselves — the New
+Booking screen shows the auto-assigned one with a picker to override it. A route already
+taken for that date and session is refused; the auto-assignment is only the default.
 
 ### Accompaniments are derived, never booked
 Sambar and FG Chutney are flagged `accompaniment`. The booker never enters them — the API

@@ -78,6 +78,8 @@ export interface Dish {
   unit: "NOS" | "G";
   packingFactor: number;
   packingVesselKg: number | null;
+  /** Rupees per consumed plate. Null means "use the default rate setting". */
+  ratePerPlate: number | null;
 }
 
 /** A dish as the booking screen sees it — no packing config, but knows whether
@@ -142,8 +144,40 @@ export interface Booking {
   items: { dish: string; plates: number }[];
   status: string;
   consumptionStatus: string | null;
+  /** Why verification sent the close-out back, if they did. */
+  rejectionReason: string | null;
+  /** Rupees owed once verified. */
+  amount: number | null;
   needsCloseOut: boolean;
+  /** Who placed it. The list covers every booker, not just the caller. */
+  bookedById: number | null;
+  /** True when the signed-in user is the one who placed it. */
+  mine: boolean;
 }
+
+/** The close-out form's data. `consumed` carries anything already submitted,
+ *  so a close-out that was sent back reopens with its previous numbers. */
+export interface CloseoutItems {
+  orderId: number;
+  unit: string;
+  session: string;
+  items: { dishId: number; name: string; ordered: number; consumed: number | null }[];
+  previous: {
+    status: string;
+    notes: string | null;
+    rejectionReason: string | null;
+    taste: number | null;
+    quality: number | null;
+    remarks: string | null;
+  } | null;
+}
+
+/** Whether this booker may open a new order for each meal, and what blocks it. */
+export interface MealStatus {
+  canOrder: boolean;
+  blockedBy: { orderId: number; unit: string; date: string; needs: string[] } | null;
+}
+export type BookingStatus = Record<"BREAKFAST" | "LUNCH" | "DINNER", MealStatus>;
 
 export interface Progress {
   total: number;
@@ -196,6 +230,8 @@ export interface Done {
   date: string;
   consumed: number;
   verifiedAt: string | null;
+  /** Rupees owed, frozen when the close-out was approved. */
+  amount: number | null;
 }
 
 // ------------------------------------------------------------------ admin
@@ -281,10 +317,8 @@ export const api = {
   // --- BOOKING ---
   bookingMenu: () => req<BookingMenu>("/booking-menu"),
   recentBookings: () => req<Booking[]>("/bookings/recent"),
-  closeoutItems: (orderId: number) =>
-    req<{ orderId: number; unit: string; session: string; items: { dishId: number; name: string; ordered: number }[] }>(
-      `/orders/${orderId}/closeout-items`
-    ),
+  closeoutItems: (orderId: number) => req<CloseoutItems>(`/orders/${orderId}/closeout-items`),
+  bookingStatus: () => req<BookingStatus>("/me/booking-status"),
   progress: (date: string, session: string) =>
     req<Progress>(`/booking/progress?date=${date}&session=${session}`),
   placeOrder: (body: Record<string, unknown>) =>
@@ -316,17 +350,18 @@ export const api = {
   pending: () => req<Pending[]>("/verification/pending"),
   done: () => req<Done[]>("/verification/done"),
   /** The verifier is taken from the signed-in session server-side. */
-  verify: (orderId: number, approve: boolean) =>
-    req<{ ok: boolean }>("/orders/verify", {
+  /** Approving freezes the amount; returning requires a reason. */
+  verify: (orderId: number, approve: boolean, reason?: string) =>
+    req<{ ok: boolean; amount: number | null }>("/orders/verify", {
       method: "POST",
-      body: JSON.stringify({ orderId, approve }),
+      body: JSON.stringify({ orderId, approve, reason }),
     }),
 
   // --- SUPER_ADMIN ---
   dishes: () => req<Dish[]>("/admin/dishes"),
   saveDish: (
     id: number,
-    body: Partial<Pick<Dish, "group" | "bookable" | "qtyPerPlate" | "unit" | "packingFactor" | "packingVesselKg">>
+    body: Partial<Pick<Dish, "group" | "bookable" | "qtyPerPlate" | "unit" | "packingFactor" | "packingVesselKg" | "ratePerPlate">>
   ) => req<Dish>(`/admin/dishes/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   addDish: (body: {
     name: string;

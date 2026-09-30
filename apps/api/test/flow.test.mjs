@@ -10,6 +10,11 @@
 //
 // Usage:
 //   API=http://127.0.0.1:4200 node flow.test.mjs
+//
+// Set DATABASE_URL as well to include the per-booker reorder gate checks. They
+// need psql because the gate only bites ACROSS dates (a second order for the
+// same date is stopped earlier, by the one-per-booker-per-day rule), so the
+// test backdates an open order to reach it in a single run.
 
 const API = process.env.API ?? "http://127.0.0.1:4200";
 
@@ -226,28 +231,128 @@ const dinnerSameBooker = await call("/orders", {
 check(dinnerSameBooker.status === 200, "the same booker may still book a different meal",
   JSON.stringify(dinnerSameBooker.data).slice(0, 120));
 
-console.log(`\n--- KNOWN GAP: the reorder gate is advisory, not enforced ---`);
-// /units/:id/can-order reports whether a route is clear to book again, and the
-// booking UI reads it — but POST /orders never consults it. So the "mandatory
-// loop" the system is built around can be walked straight past by any client
-// that simply does not ask. Documented here so the behaviour is visible; see
-// the note in the project docs before changing it.
+console.log(`\n--- the per-booker reorder gate ---`);
+// A booker's FIRST order of a meal is free. Every one after that requires the
+// previous order in that same meal to be closed out — consumption AND feedback.
+// It is enforced in POST /orders, not merely reported, and /me/booking-status
+// exposes the same answer so the UI can say so before a form is filled.
+//
+// Note there are two different gates in this system and they are not the same:
+//   /units/:id/can-order   per ROUTE,  still advisory — the kitchen's view
+//   /me/booking-status     per BOOKER, enforced      — the rule below
 {
-  // Unit-2 has an open tiffin order that was never closed out.
-  const unitId = auto2.data.unitId;
-  const gate = (await call(`/units/${unitId}/can-order`, { token: bookers[0] })).data;
-  check(gate.canOrder === false, `gate reports Unit-2 as locked (${gate.reason})`);
-
-  // A booker who has not yet booked dinner places one on that same locked route.
-  // Window rules and the per-booker rule both allow it; only the reorder gate
-  // should stop it — and it does not, because POST /orders never asks.
-  const sneak = await call("/orders", {
-    method: "POST", token: bookers[5],
-    body: { date: TOMORROW, session: "DINNER", items: [{ dishId: idly.id, plates: 5 }], unitId },
+  await call("/admin/users", {
+    method: "POST", token: admin,
+    body: { role: "BOOKING", username: "gatetest", password: "testpass123", name: "Gate Test" },
   });
-  check(sneak.status === 200,
-    `the API still accepts a new order for that locked route (status ${sneak.status}) — gate NOT enforced`,
-    JSON.stringify(sneak.data).slice(0, 140));
+  const gb = await login("gatetest");
+
+  const before = (await call("/me/booking-status", { token: gb })).data;
+  check(before?.DINNER?.canOrder === true, "a booker with no history may place a first order");
+
+  const first = await call("/orders", {
+    method: "POST", token: gb,
+    body: { date: TOMORROW, session: "DINNER", items: [{ dishId: idly.id, plates: 30 }] },
+  });
+  check(first.status === 200, "the first dinner order is accepted", JSON.stringify(first.data).slice(0, 140));
+
+  const held = (await call("/me/booking-status", { token: gb })).data;
+  check(held?.DINNER?.canOrder === false, "dinner is now held pending close-out");
+  check(
+    Array.isArray(held?.DINNER?.blockedBy?.needs) &&
+      held.DINNER.blockedBy.needs.includes("consumption") &&
+      held.DINNER.blockedBy.needs.includes("feedback"),
+    `the hold names what is missing (${JSON.stringify(held?.DINNER?.blockedBy?.needs)})`
+  );
+  check(held?.DINNER?.blockedBy?.orderId === first.data.id, "the hold points at the order to close out");
+
+  // Per MEAL, not across meals: tiffin and dinner are separate chains. A shared
+  // gate would deadlock — you cannot close out tonight's dinner before the
+  // cutoff for tomorrow's tiffin.
+  check(held?.BREAKFAST?.canOrder === true, "a different meal is unaffected by the hold");
+
+  // Enforcement in POST /orders only becomes reachable across DATES: a second
+  // order for the SAME date is stopped earlier, by the one-per-booker-per-day
+  // rule. Backdate the open order to make the realistic case — "yesterday's
+  // dinner was never closed out, now book tomorrow's" — testable in one run.
+  if (process.env.DATABASE_URL) {
+    const { execFileSync } = await import("node:child_process");
+    const sql = (q) =>
+      execFileSync("psql", [process.env.DATABASE_URL, "-qAt", "-c", q], { encoding: "utf8" }).trim();
+
+    sql(`UPDATE "Order" SET date = date - interval '2 days' WHERE id = ${first.data.id}`);
+
+    const blocked = await call("/orders", {
+      method: "POST", token: gb,
+      body: { date: TOMORROW, session: "DINNER", items: [{ dishId: idly.id, plates: 30 }] },
+    });
+    check(blocked.status === 409, `a second dinner order is refused while the first is open (got ${blocked.status})`,
+      JSON.stringify(blocked.data).slice(0, 160));
+    check(/close out your previous/i.test(blocked.data?.error ?? ""),
+      "the refusal tells the booker what to do", JSON.stringify(blocked.data?.error));
+    check(blocked.data?.blockedBy?.orderId === first.data.id,
+      "the refusal identifies the order that must be closed out");
+
+    // Consumption alone is not enough — feedback is part of closing out. The
+    // API takes both in one call, so submit with a zero rating: that is
+    // rejected outright, which is what keeps "consumption then feedback"
+    // from being half-done.
+    const half = await call("/orders/consumption", {
+      method: "POST", token: gb,
+      body: { orderId: first.data.id, items: [], taste: 0, quality: 0 },
+    });
+    check(half.status === 422, "consumption without feedback is refused, so the hold cannot be half-cleared");
+
+    const items = (await call(`/orders/${first.data.id}/closeout-items`, { token: gb })).data;
+    const closed = await call("/orders/consumption", {
+      method: "POST", token: gb,
+      body: {
+        orderId: first.data.id,
+        items: items.items.map((i) => ({ dishId: i.dishId, consumed: i.ordered })),
+        taste: 5, quality: 5,
+      },
+    });
+    check(closed.status === 200, "the booker closes out the open dinner", JSON.stringify(closed.data).slice(0, 120));
+
+    // Deliberately NOT verified. Requiring an approved verification would put
+    // the verification team on the critical path of every booking.
+    const cleared = (await call("/me/booking-status", { token: gb })).data;
+    check(cleared?.DINNER?.canOrder === true, "closing out releases the hold without waiting for verification");
+
+    const second = await call("/orders", {
+      method: "POST", token: gb,
+      body: { date: TOMORROW, session: "DINNER", items: [{ dishId: idly.id, plates: 30 }] },
+    });
+    check(second.status === 200, "the next dinner order is accepted once the loop is complete",
+      JSON.stringify(second.data).slice(0, 140));
+
+    // That new order re-arms the gate. Backdated further than the first one:
+    // a route holds at most one order per date+session, and freeing tomorrow's
+    // slot means the new order landed on the same route the first one used.
+    sql(`UPDATE "Order" SET date = date - interval '5 days' WHERE id = ${second.data.id}`);
+    const blockedAgain = await call("/orders", {
+      method: "POST", token: gb,
+      body: { date: TOMORROW, session: "DINNER", items: [{ dishId: idly.id, plates: 30 }] },
+    });
+    check(blockedAgain.status === 409, "the gate re-arms for every order, not just the second");
+
+    // ...but an emergency order is exempt by definition: it is the escape hatch
+    // for the day something goes wrong, which is exactly when a booker is most
+    // likely to be mid-loop.
+    const emergency = await call("/orders", {
+      method: "POST", token: gb,
+      body: { date: TOMORROW, session: "DINNER", peopleCount: 40, isEmergency: true },
+    });
+    check(emergency.status === 200, "an emergency order is exempt from the gate",
+      JSON.stringify(emergency.data).slice(0, 140));
+
+    // ...and an emergency order does not itself become a blocker.
+    const afterEmergency = (await call("/me/booking-status", { token: gb })).data;
+    check(afterEmergency?.DINNER?.blockedBy?.orderId === blockedAgain.data?.blockedBy?.orderId,
+      "an emergency order does not become the thing blocking the next booking");
+  } else {
+    console.log("SKIP  cross-date gate enforcement (set DATABASE_URL to run it)");
+  }
 }
 
 console.log(`\n${fail === 0 ? "All" : `${pass}/${pass + fail}`} checks passed${fail ? ` — ${fail} FAILED` : "."}`);

@@ -15,6 +15,7 @@ import { ToastHost } from "./ui";
 import { tomorrow, ymd } from "./util";
 import Auth from "./Auth";
 import { SectionErrorBoundary } from "./ErrorBoundary";
+import InstallBanner from "./Install";
 
 const initials = (name: string) =>
   name.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || "?";
@@ -41,6 +42,12 @@ export default function App() {
   }, []);
 
   const groups = useMemo(() => (me ? groupsFor(me.role) : []), [me]);
+  // Roles with a handful of sections get a thumb-reachable bottom tab bar on a
+  // phone; only Super Admin, with fourteen, needs the off-canvas drawer. A
+  // hamburger hides every destination behind a tap the booker has to learn
+  // about first, which is the wrong trade for three items.
+  const tabCount = useMemo(() => groups.reduce((n, g) => n + g.items.length, 0), [groups]);
+  const useDrawer = tabCount > 5;
   const current = useMemo(() => NAV.find((i) => i.key === section) ?? null, [section]);
 
   function signIn(user: AuthedUser) {
@@ -87,6 +94,7 @@ export default function App() {
     onBooked: () => go("mine"),
     onCloseOut: (b: Booking) => { setClosing(b); go("close"); },
     onDone: () => { setClosing(null); go("mine"); },
+    onCloseOutNeeded: () => go("close"),
   };
 
   const Current = current?.component;
@@ -96,10 +104,12 @@ export default function App() {
       <div className="app">
         <div className="navbar">
           <div className="left">
-            <button className="hamburger" onClick={() => setNavOpen(true)} aria-label="Menu">
-              <i className="ti ti-menu-2" aria-hidden="true"></i>
-              {notif.unread > 0 ? <span className="navdot" style={{ top: 6, right: 6 }} /> : null}
-            </button>
+            {useDrawer && (
+              <button className="hamburger" onClick={() => setNavOpen(true)} aria-label="Menu">
+                <i className="ti ti-menu-2" aria-hidden="true"></i>
+                {notif.unread > 0 ? <span className="navdot" style={{ top: 6, right: 6 }} /> : null}
+              </button>
+            )}
             <div className="logo"><LogoMark size={40} /></div>
             <div className="brand">
               <div className="title">Akshaya Patra Kitchen</div>
@@ -121,10 +131,10 @@ export default function App() {
           </div>
         </div>
 
-        {navOpen ? <div className="drawer-scrim" onClick={() => setNavOpen(false)} /> : null}
+        {useDrawer && navOpen ? <div className="drawer-scrim" onClick={() => setNavOpen(false)} /> : null}
 
         <div className="shell">
-          <aside className={`sidebar drawer ${navOpen ? "open" : ""}`}>
+          <aside className={`sidebar ${useDrawer ? "drawer" : ""} ${navOpen ? "open" : ""}`}>
             {groups.map(({ group, items }) => (
               <div key={group}>
                 <div className="secthead">{group}</div>
@@ -148,6 +158,8 @@ export default function App() {
           </aside>
 
           <main className="main">
+            <InstallBanner />
+
             {current?.needsDate ? (
               <div className="toolbar">
                 <label className="muted" htmlFor="cooking-date">Cooking date</label>
