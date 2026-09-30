@@ -112,7 +112,7 @@ export default function App() {
             )}
             <div className="logo"><LogoMark size={40} /></div>
             <div className="brand">
-              <div className="title">Akshaya Patra Kitchen</div>
+              <div className="title">Brandix</div>
               <div className="sub">{ROLE_LABEL[me.role]}</div>
             </div>
           </div>

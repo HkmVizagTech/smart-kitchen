@@ -73,7 +73,7 @@ export default function InstallBanner() {
       <div className="install-bar">
         <span className="install-ic" aria-hidden="true"><i className="ti ti-device-mobile-down"></i></span>
         <div className="install-text">
-          <b>Add Akshaya Patra Kitchen to your phone</b>
+          <b>Add Brandix to your phone</b>
           <span>Opens full screen from your home screen, like any other app.</span>
         </div>
         <div className="install-actions">

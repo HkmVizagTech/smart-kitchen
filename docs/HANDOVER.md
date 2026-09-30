@@ -18,10 +18,12 @@ into cookable quantities (kg of sambar, number of idlys) and split across physic
 vessels. After delivery each route reports what was actually eaten, and a verification
 team signs it off before that route may book again.
 
-Internally the code is branded **"Akshaya Patra Kitchen"** and the generated Excel says
-**"Touch Stone Foundation — Vishakhapatnam" / "Brandix Delivery Sheet"**. That is
-leftover branding from the reference spreadsheet the developer built against — not
-something you have to keep.
+The code is branded **"Brandix"** (rebranded 30 Sep 2026, from "Akshaya Patra
+Kitchen") and the generated Excel says **"Touch Stone Foundation —
+Vishakhapatnam" / "Brandix Delivery Sheet"**. The old app name was leftover
+branding from the reference spreadsheet the developer built against. The Android
+package ids remain `com.akshayapatra.*` — deliberate, as changing them breaks OTA
+updates for already-installed apps.
 
 ### The core loop
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-#  Akshaya Patra — STEP 2: build the 4 Android APKs
+#  Brandix — STEP 2: build the 4 Android APKs
 #  Run from Terminal:   bash build-android.sh
 #  Builds headlessly (no Android Studio GUI needed). Needs
 #  Homebrew installed. You'll be asked for your Mac password

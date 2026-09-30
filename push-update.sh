@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-#  Akshaya Patra — push a self-hosted OTA update (no Capgo cloud,
+#  Brandix — push a self-hosted OTA update (no Capgo cloud,
 #  no fees). Builds each app, zips it, and uploads to YOUR Railway
 #  API. Installed apps then show "Update now".
 #

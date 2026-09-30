@@ -9,6 +9,13 @@ Four separate apps, installed **without any app store**:
 | Verification | `apps/verification` | `com.akshayapatra.verify` | native APK | PWA |
 | Super Admin | `apps/admin` | `com.akshayapatra.admin` | native APK | PWA |
 
+> **Stale — read before using.** The app directories listed above no longer
+> exist: the four apps were merged into one, `apps/web` (Sep 2026). The Android
+> **package ids were deliberately left as `com.akshayapatra.*`** even though the
+> app is now called Brandix — renaming a package id is a *different* app to the
+> Play Store and to the OTA updater, so already-installed phones would stop
+> receiving updates. Only change these as a deliberate, separate piece of work.
+
 - **Android** → a real `.apk` the user downloads from a link and installs by hand.
 - **iPhone** → installed from the same web link via Safari → **Add to Home Screen** (a real native iOS app cannot be link-installed without a paid Apple account, so PWA is the free, unlimited route).
 

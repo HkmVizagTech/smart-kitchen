@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-#  Akshaya Patra — deploy the 4 web apps to Railway.
+#  Brandix — deploy the 4 web apps to Railway.
 #  Run AFTER you've created the 4 services in the dashboard
 #  (see DEPLOY_WEB.md). Then:  bash deploy-web.sh
 #  Optional: one app only ->   bash deploy-web.sh web-admin

@@ -26,10 +26,14 @@ ordering without ever reporting consumption.
 
 The six routes are `Unit-1`, `Unit-2`, `Unit-3`, `Unit-4`, `Visakha`, `Others`.
 
-> **A note on the branding.** The app's title says *"Akshaya Patra Kitchen"* and
-> the generated Excel says *"Touch Stone Foundation — Vishakhapatnam"*. That is
-> leftover from the reference spreadsheet the original developer worked from. It
-> is text in two files, not a dependency — change it whenever you like.
+> **A note on the branding.** The app is called **Brandix** (rebranded from
+> *"Akshaya Patra Kitchen"* on 30 Sep 2026; the old name was leftover from the
+> reference spreadsheet the original developer worked from). The generated Excel
+> already said *"Touch Stone Foundation — Vishakhapatnam" / "Brandix Delivery
+> Sheet"*, so the two now agree. It is text in a handful of files, not a
+> dependency. Note the Android package ids are still `com.akshayapatra.*` — see
+> `BUILD_MOBILE.md` before changing those, as renaming them breaks OTA updates
+> for already-installed apps.
 
 ---
 
@@ -408,11 +412,12 @@ network, with no credentials)
 - **One role per user.** Someone who does two jobs needs two accounts. Changing
   this is a database change plus a permissions change — worth deciding before
   the user list grows.
-- **The branding.** The app is called **Akshaya Patra Kitchen**; the generated
-  Excel says "Touch Stone Foundation — Vishakhapatnam", which is leftover from
-  the reference spreadsheet the original developer built against. The app name
-  is one string in `apps/web/src/App.tsx` and one in `Auth.tsx`; the Excel
-  headings live in `packingService.ts`.
+- **The branding.** The app is called **Brandix**. The generated Excel says
+  "Touch Stone Foundation — Vishakhapatnam" / "Brandix Delivery Sheet", which is
+  leftover from the reference spreadsheet the original developer built against.
+  The org name is a Super-Admin setting (`org_name`, default "Brandix") and the
+  Excel headings live in `packingService.ts`. The Android package ids are still
+  `com.akshayapatra.*`; changing those is a breaking change for installed apps.
 
 ### Known technical debt
 

@@ -1,5 +1,5 @@
 /* ============================================================
-   Akshaya Patra Kitchen — design system
+   Brandix — design system
 
    Palette, as given:
      #F9F7F7  page            #DBE2EF  soft surface / dividers
@@ -359,7 +359,21 @@ button.btn.ghost.loading::after { border-color: rgba(17, 45, 78, .3); border-top
 .ok { color: var(--green); margin-top: 10px; font-weight: 700; }
 
 /* ---------------- tables ---------------- */
-.tablewrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); background: #fff; box-shadow: var(--shadow-xs); }
+/* The packing sheet is far wider than any screen, and a table that simply ran
+   off the edge gave no sign there was more. These are scroll shadows: the two
+   `local` layers scroll with the content and cover the shadows at the ends, so
+   a soft edge appears only on the side there is more to see. */
+.tablewrap {
+  overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow-xs);
+  background:
+    linear-gradient(to right, #fff 34%, rgba(255, 255, 255, 0)) left / 44px 100% no-repeat,
+    linear-gradient(to left,  #fff 34%, rgba(255, 255, 255, 0)) right / 44px 100% no-repeat,
+    radial-gradient(farthest-side at 0 50%, rgba(17, 45, 78, .16), rgba(17, 45, 78, 0)) left / 15px 100% no-repeat,
+    radial-gradient(farthest-side at 100% 50%, rgba(17, 45, 78, .16), rgba(17, 45, 78, 0)) right / 15px 100% no-repeat,
+    #fff;
+  background-attachment: local, local, scroll, scroll, local;
+}
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
 thead th { background: var(--surface); position: sticky; top: 0; color: var(--ink); }
 th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--border); }
@@ -368,6 +382,74 @@ tbody tr { transition: background var(--t-fast); }
 tbody tr:last-child td { border-bottom: none; }
 tbody tr:hover { background: var(--primary-soft); }
 .kv td:first-child { color: var(--muted); width: 1%; white-space: nowrap; font-weight: 600; }
+
+/* ---------------- menu editor ----------------
+   One card per weekday, and inside it one block per line. The blocks are
+   bordered rather than nested cards so three of them do not read as three
+   separate things to save. */
+.menu-edit { margin-top: 10px; }
+.menu-line {
+  border: 1px solid var(--border-2); border-radius: var(--radius);
+  padding: 14px; margin-bottom: 10px; background: var(--paper);
+}
+.menu-line select { margin-top: 8px; }
+.menu-line .chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 6px; }
+.menu-line .chip {
+  cursor: pointer; padding: 7px 11px; font-size: 13px; font-weight: 700;
+  color: var(--text-2); box-shadow: none; transition: var(--t-fast);
+}
+.menu-line .chip:hover { border-color: var(--primary); color: var(--primary-dark); }
+.menu-line .chip.on {
+  background: var(--primary-soft); border-color: var(--primary); color: var(--primary-dark);
+}
+
+/* ---------------- close-out step strip ---------------- */
+.steps {
+  display: flex; align-items: center; gap: 4px; list-style: none;
+  margin: 14px 0 0; padding: 0;
+}
+.step { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.step + .step::before {
+  content: ""; flex: 1 1 14px; min-width: 12px; height: 2px; border-radius: 2px;
+  background: var(--border-2);
+}
+.step.done + .step::before, .step.now + .step::before { background: var(--primary); }
+.step-n {
+  width: 24px; height: 24px; flex-shrink: 0; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 800; line-height: 1;
+  background: #fff; color: var(--muted); border: 2px solid var(--border-2);
+}
+.step-l {
+  font-size: 12px; font-weight: 700; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.step.now .step-n { background: var(--primary); color: #fff; border-color: var(--primary); }
+.step.now .step-l { color: var(--ink); }
+.step.done .step-n { background: var(--primary-soft); color: var(--primary-dark); border-color: var(--primary); }
+.step.done .step-l { color: var(--primary-dark); }
+/* On a phone three labels do not fit, and half-words ("Verificat…") are worse
+   than none. Only the step you are on keeps its label; the rest are numbers. */
+@media (max-width: 520px) {
+  .step:not(.now) .step-l { display: none; }
+  .step:not(.now) { gap: 0; }
+  .step.now .step-l { font-size: 13px; }
+}
+
+/* a consumption figure that is submitted and no longer editable */
+.readnum {
+  min-width: 56px; text-align: center; padding: 9px 12px; border-radius: 10px;
+  background: var(--surface); border: 1px solid var(--border-2);
+  font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums;
+}
+
+/* packing sheet: dish group bands, vessel sizes, and the totals row */
+thead th.grp { background: var(--primary-soft); color: var(--primary-dark); text-align: center; }
+thead th.vsz { color: var(--primary); font-variant-numeric: tabular-nums; }
+.tablewrap table td { font-variant-numeric: tabular-nums; }
+tr.totalrow { background: var(--surface); font-weight: 800; }
+tr.totalrow:hover { background: var(--surface); }
+tr.totalrow td { border-top: 2px solid var(--border-2); }
 
 /* ---------------- toolbar / search ---------------- */
 .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
@@ -841,3 +923,35 @@ tbody tr:hover { background: var(--primary-soft); }
 }
 .star:hover { border-color: var(--warn); color: var(--warn); }
 .star.on { background: var(--warn-soft); border-color: #e6cd93; color: var(--warn); }
+
+/* ---------------- booking by item slot ----------------
+   Three lines, one per item, each naming the dish the menu says it is. This
+   replaced a picker over sixteen dishes — which was never how the kitchen
+   worked, since the real packing sheet's indent block is three numbers. */
+.slots { margin-top: 14px; }
+.slot {
+  display: flex; align-items: center; gap: 14px;
+  padding: 13px 0; border-bottom: 1px solid var(--border);
+}
+.slot:last-child { border-bottom: none; }
+.slot-info { flex: 1; min-width: 0; }
+.slot-tag {
+  display: inline-block; font-size: 10.5px; font-weight: 800; letter-spacing: .5px;
+  text-transform: uppercase; color: var(--primary-dark);
+  background: var(--primary-soft); border-radius: 999px; padding: 2px 9px; margin-bottom: 5px;
+}
+.slot-dish { font-weight: 750; font-size: 15px; color: var(--ink); }
+.slot-qty { font-weight: 600; font-size: 12.5px; color: var(--muted); margin-left: 6px; }
+.slot-with { font-size: 12px; color: var(--muted); margin-top: 3px; line-height: 1.4; }
+
+/* lunch is a headcount, so its menu is read, not ordered */
+.lunch-menu { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border-2); }
+.lm-lab {
+  display: block; font-size: 10.5px; font-weight: 800; letter-spacing: .5px;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 7px;
+}
+.lm-items { display: flex; flex-wrap: wrap; gap: 6px; }
+.lm-item {
+  font-size: 12px; font-weight: 650; padding: 4px 10px; border-radius: 999px;
+  background: var(--surface-soft); border: 1px solid var(--border); color: var(--text-2);
+}

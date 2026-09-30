@@ -53,7 +53,7 @@ export default function Auth({ onAuthed }: { onAuthed: (u: AuthedUser) => void }
     <div className="auth">
       <div className="auth-hero">
         <div className="auth-emblem"><Emblem size={64} /></div>
-        <div className="auth-brand">Akshaya Patra Kitchen</div>
+        <div className="auth-brand">Brandix</div>
         <div className="auth-sub">Sign in to continue</div>
       </div>
 

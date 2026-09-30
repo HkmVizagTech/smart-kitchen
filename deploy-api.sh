@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-#  Akshaya Patra — STEP 1: put the API online (Railway)
+#  Brandix — STEP 1: put the API online (Railway)
 #  Run from Terminal:   bash deploy-api.sh
 #  The ONLY manual moment is approving the Railway login in your
 #  browser. Everything else is automatic.
