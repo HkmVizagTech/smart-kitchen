@@ -13,6 +13,7 @@ import type { Role } from "./api";
 import { NewBooking, MyBookings, CloseOut } from "./sections/booking";
 import { KitchenOrders } from "./sections/kitchen";
 import Packing from "./sections/packing";
+import Menu from "./sections/menu";
 import { Verify, Payments } from "./sections/verification";
 import { Dashboard, Dishes, Reports, Settings, Units, Users, Vessels } from "./sections/admin";
 
@@ -41,6 +42,7 @@ export const NAV: NavItem[] = [
   // --- Kitchen ---
   { key: "orders",    label: "Orders",        icon: "ti ti-clipboard-list",      group: "Kitchen",      roles: ["KITCHEN_ADMIN", "SUPER_ADMIN"], needsDate: true, component: KitchenOrders },
   { key: "packing",   label: "Packing Sheet", icon: "ti ti-file-spreadsheet",    group: "Kitchen",      roles: ["KITCHEN_ADMIN", "SUPER_ADMIN"], needsDate: true, component: Packing },
+  { key: "menu",      label: "Menu",          icon: "ti ti-book",                group: "Kitchen",      roles: ["KITCHEN_ADMIN", "SUPER_ADMIN"], needsDate: true, component: Menu },
 
   // --- Verification ---
   { key: "verify",    label: "To verify",     icon: "ti ti-checkup-list",        group: "Verification", roles: ["VERIFICATION_ADMIN", "SUPER_ADMIN"], component: Verify },

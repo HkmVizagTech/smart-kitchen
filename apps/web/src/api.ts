@@ -144,15 +144,73 @@ export interface Booking {
   items: { dish: string; plates: number }[];
   status: string;
   consumptionStatus: string | null;
+  /** Feedback is the last step, so this is what says a close-out is finished. */
+  hasFeedback: boolean;
   /** Why verification sent the close-out back, if they did. */
   rejectionReason: string | null;
   /** Rupees owed once verified. */
   amount: number | null;
+  /** The three plate counts as booked, for one-tap repeats. */
+  slots: SlotCounts;
   needsCloseOut: boolean;
   /** Who placed it. The list covers every booker, not just the caller. */
   bookedById: number | null;
   /** True when the signed-in user is the one who placed it. */
   mine: boolean;
+}
+
+/** A dish as it appears on the day's menu. */
+export interface MenuDish {
+  id: number;
+  name: string;
+  qtyPerPlate: number;
+  unit: "NOS" | "G";
+}
+
+/** One line of the booking form. `group` is null for lunch, which is booked
+ *  as a headcount — those slots exist to be read, not ordered. */
+export interface MenuSlot {
+  group: "ITEM1" | "ITEM2" | "ITEM3" | null;
+  sortOrder: number;
+  dish: MenuDish;
+  /** Added automatically at this line's plate count. */
+  accompaniments: MenuDish[];
+}
+
+export interface DayMenu {
+  date: string;
+  session: string;
+  slots: MenuSlot[];
+}
+
+export type SlotCounts = Partial<Record<"ITEM1" | "ITEM2" | "ITEM3", number>>;
+
+// ------------------------------------------------------------------ menu editor
+/** A dish as the editor picks from, including whether it is a side. */
+export interface MenuOptionDish extends MenuDish {
+  accompaniment: boolean;
+  group: string;
+}
+
+/** A menu line as the editor reads it — carries its row id, unlike MenuSlot. */
+export interface MenuAdminSlot {
+  id: number;
+  group: "ITEM1" | "ITEM2" | "ITEM3" | null;
+  sortOrder: number;
+  dish: MenuDish;
+  accompaniments: MenuDish[];
+}
+
+export interface DayPlan {
+  day: string;
+  slots: MenuAdminSlot[];
+}
+
+/** What the editor sends back for one day. */
+export interface MenuDraft {
+  group: string | null;
+  dishId: number;
+  accompanimentIds: number[];
 }
 
 /** The close-out form's data. `consumed` carries anything already submitted,
@@ -161,6 +219,9 @@ export interface CloseoutItems {
   orderId: number;
   unit: string;
   session: string;
+  date: string;
+  /** Which of the two booker steps is open — the screen reads this directly. */
+  stage: "CONSUMPTION" | "AWAITING_VERIFICATION" | "FEEDBACK" | "DONE";
   items: { dishId: number; name: string; ordered: number; consumed: number | null }[];
   previous: {
     status: string;
@@ -217,9 +278,6 @@ export interface Pending {
   consumed: number;
   leftover: number;
   notes: string | null;
-  taste: number | null;
-  quality: number | null;
-  remarks: string | null;
   items: { name: string; ordered: number; consumed: number; leftover: number; extra: number }[];
 }
 
@@ -316,6 +374,9 @@ export const api = {
 
   // --- BOOKING ---
   bookingMenu: () => req<BookingMenu>("/booking-menu"),
+  /** What is on the menu for one date and meal. */
+  menu: (date: string, session: string) =>
+    req<DayMenu>(`/menu?date=${date}&session=${encodeURIComponent(session)}`),
   recentBookings: () => req<Booking[]>("/bookings/recent"),
   closeoutItems: (orderId: number) => req<CloseoutItems>(`/orders/${orderId}/closeout-items`),
   bookingStatus: () => req<BookingStatus>("/me/booking-status"),
@@ -328,6 +389,9 @@ export const api = {
     }),
   submitConsumption: (body: Record<string, unknown>) =>
     req<unknown>("/orders/consumption", { method: "POST", body: JSON.stringify(body) }),
+  /** Step 2 — only accepted once the consumption has been verified. */
+  submitFeedback: (body: { orderId: number; taste: number; quality: number; remarks?: string }) =>
+    req<unknown>("/orders/feedback", { method: "POST", body: JSON.stringify(body) }),
 
   // --- KITCHEN_ADMIN ---
   setStatus: (id: number, status: string) =>
@@ -337,14 +401,32 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ date, session, status }),
     }),
+  // --- MENU EDITOR (kitchen + super admin) ---
+  menuOptions: () =>
+    req<{ dishes: MenuOptionDish[]; days: string[]; groups: string[]; cycles: Record<string, number> }>(
+      "/menu-admin/options"
+    ),
+  menuPlan: (session: string, week: number) =>
+    req<{ session: string; week: number; days: DayPlan[] }>(`/menu-admin/plan?session=${session}&week=${week}`),
+  menuDay: (date: string, session: string) =>
+    req<{ date: string; session: string; overridden: boolean; booked: number; slots: MenuAdminSlot[] }>(
+      `/menu-admin/day?date=${date}&session=${session}`
+    ),
+  saveMenuPlan: (body: { session: string; week: number; day: string; slots: MenuDraft[] }) =>
+    req<{ ok: true }>("/menu-admin/plan", { method: "PUT", body: JSON.stringify(body) }),
+  saveMenuDay: (body: { session: string; date: string; slots: MenuDraft[] }) =>
+    req<{ ok: true }>("/menu-admin/day", { method: "PUT", body: JSON.stringify(body) }),
+  clearMenuDay: (date: string, session: string) =>
+    req<{ removed: number }>(`/menu-admin/day?date=${date}&session=${session}`, { method: "DELETE" }),
+
   packing: (date: string, session: "BREAKFAST" | "DINNER") =>
-    req<{ ready: boolean; booked: number; total: number; sheet: PackingSheet | null }>(
+    req<{ ready: boolean; booked: number; total: number; missing: string[]; sheet: PackingSheet | null }>(
       `/packing/preview?date=${date}&session=${session}`
     ),
   // A browser navigation cannot send an Authorization header, so the token
   // rides along as a query param. The API accepts it for this route only.
-  packingExcelUrl: (date: string) =>
-    `${API_BASE}/packing/excel?date=${date}&token=${encodeURIComponent(getToken() ?? "")}`,
+  packingExcelUrl: (date: string, force = false) =>
+    `${API_BASE}/packing/excel?date=${date}${force ? "&force=1" : ""}&token=${encodeURIComponent(getToken() ?? "")}`,
 
   // --- VERIFICATION_ADMIN ---
   pending: () => req<Pending[]>("/verification/pending"),

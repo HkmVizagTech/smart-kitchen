@@ -4,6 +4,7 @@ import authRoutes from "./routes/auth.js";
 import orderRoutes from "./routes/orders.js";
 import packingRoutes from "./routes/packing.js";
 import adminRoutes from "./routes/admin.js";
+import menuAdminRoutes from "./routes/menuAdmin.js";
 import notificationRoutes from "./routes/notifications.js";
 import updateRoutes from "./routes/updates.js";
 
@@ -38,6 +39,7 @@ await app.register(authRoutes);
 await app.register(orderRoutes);
 await app.register(packingRoutes);
 await app.register(adminRoutes);
+await app.register(menuAdminRoutes);
 await app.register(notificationRoutes);
 await app.register(updateRoutes);
 

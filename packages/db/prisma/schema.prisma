@@ -165,6 +165,60 @@ model Dish {
 
   orderItems       OrderItem[]
   consumptionItems ConsumptionItem[]
+  menuSlots        MenuSlot[]              @relation("MenuSlotMain")
+  menuAccompanying MenuSlotAccompaniment[] @relation("MenuSlotAccompaniment")
+}
+
+// ----------------------------------------------------------------- the menu
+//
+// What is cooked on a given day. The kitchen keeps a repeating plan — tiffin
+// and dinner on a one-week cycle, lunch on a two-week one — and occasionally
+// changes a single day.
+//
+// A slot is one line of the booking form: "Item 1", "Item 2", "Item 3". It
+// names the MAIN dish, and the accompaniments that are derived from that
+// slot's plate count. That is what makes the real packing sheet come out
+// right: on a Tuesday, Kurma is derived from the Biryani count, while Sambar
+// hangs off BOTH Item 1 and Item 3, so its total is (idly + wada) plates.
+// A single global "accompaniments come from Item 1 + Item 3" rule, which is
+// what this used to have, cannot express the Kurma case at all.
+//
+// `date` is what makes a one-off change possible. Rows with no date are the
+// repeating plan; a row with a date replaces the plan for that day only, and
+// the resolver prefers dated rows when any exist for that date and session.
+model MenuSlot {
+  id        Int        @id @default(autoincrement())
+  session   Session
+  /// 1 for a one-week cycle; 1..2 for lunch's fortnight.
+  week      Int        @default(1)
+  day       Day
+  /// Which booking line this is. Null for lunch, which is booked as a
+  /// headcount — its slots exist so the kitchen and the booker can SEE the
+  /// day's menu, not so it can be ordered item by item.
+  group     DishGroup?
+  sortOrder Int        @default(0)
+
+  dishId Int
+  dish   Dish @relation("MenuSlotMain", fields: [dishId], references: [id])
+
+  /// Set to pin this row to one calendar day, overriding the repeating plan.
+  date DateTime?
+
+  accompaniments MenuSlotAccompaniment[]
+
+  @@index([session, week, day])
+  @@index([session, date])
+}
+
+/// An accompaniment derived from its slot's plate count — never booked.
+model MenuSlotAccompaniment {
+  id         Int      @id @default(autoincrement())
+  slot       MenuSlot @relation(fields: [slotId], references: [id], onDelete: Cascade)
+  slotId     Int
+  dish       Dish     @relation("MenuSlotAccompaniment", fields: [dishId], references: [id])
+  dishId     Int
+
+  @@unique([slotId, dishId])
 }
 
 // Configurable counted-vessel sizes per session (idly/wada).

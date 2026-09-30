@@ -158,12 +158,11 @@ export function Verify() {
               </span>
             </div>
           </div>
-          <div className="row" style={{ marginTop: 10, gap: 18 }}>
-            <span>Taste: <Stars n={p.taste} /></span>
-            <span>Quality: <Stars n={p.quality} /></span>
-          </div>
-          {p.remarks ? <p className="muted" style={{ marginTop: 6 }}>Remarks: {p.remarks}</p> : null}
-          {p.notes ? <p className="muted" style={{ marginTop: 4 }}>Notes: {p.notes}</p> : null}
+          {p.notes ? <p className="muted" style={{ marginTop: 10 }}>Notes: {p.notes}</p> : null}
+          <p className="muted" style={{ marginTop: 6 }}>
+            You are checking the plate counts. The booker gives their feedback on the food after
+            you approve these figures.
+          </p>
 
           {returning === p.orderId && (
             <ReturnBox

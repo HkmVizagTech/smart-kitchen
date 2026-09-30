@@ -612,7 +612,7 @@ export function Settings() {
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState("");
   const FIELDS: [string, string, string, string?][] = [
-    ["org_name", "Organization name", "Akshaya Patra Kitchen"],
+    ["org_name", "Organization name", "Brandix"],
     ["lunch_deadline", "Lunch booking cutoff (HH:MM)", "11:00"],
     [
       "ratePerPlate",

@@ -5,6 +5,7 @@ export default function Packing({ date }: { date: string }) {
   const [session, setSession] = useState<"BREAKFAST" | "DINNER">("BREAKFAST");
   const [sheet, setSheet] = useState<PackingSheet | null>(null);
   const [gate, setGate] = useState<{ ready: boolean; booked: number; total: number } | null>(null);
+  const [missing, setMissing] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -14,6 +15,7 @@ export default function Packing({ date }: { date: string }) {
     try {
       const res = await api.packing(date, session);
       setGate({ ready: res.ready, booked: res.booked, total: res.total });
+      setMissing(res.missing ?? []);
       setSheet(res.sheet);
       setError("");
     } catch (e: any) {
@@ -44,13 +46,14 @@ export default function Packing({ date }: { date: string }) {
             Evening
           </button>
         </div>
-        {gate?.ready ? (
-          <a className="btn ghost sm" href={api.packingExcelUrl(date)} style={{ textDecoration: "none" }}>
-            <i className="ti ti-download" aria-hidden="true"></i> Download Excel
-          </a>
-        ) : (
-          <span className="muted">Download enabled when all kitchens are booked</span>
-        )}
+        <a
+          className={`btn sm ${gate?.ready ? "" : "ghost"}`}
+          href={api.packingExcelUrl(date, !gate?.ready)}
+          style={{ textDecoration: "none" }}
+        >
+          <i className="ti ti-download" aria-hidden="true"></i>{" "}
+          {gate?.ready ? "Download sheet" : "Download so far"}
+        </a>
       </div>
 
       {loading && <p className="muted">Loading…</p>}
@@ -58,10 +61,12 @@ export default function Packing({ date }: { date: string }) {
 
       {gate && !gate.ready && !loading && (
         <div className="card soft" style={{ marginTop: 12 }}>
-          <div className="section-title">Waiting for all kitchens</div>
+          <div className="section-title">
+            {gate.booked} of {gate.total} routes booked
+          </div>
           <p className="muted" style={{ marginTop: 6 }}>
-            {gate.booked} of {gate.total} kitchens booked for this session. The packing sheet
-            generates automatically once all {gate.total} are in.
+            {missing.length > 0 ? <>Still to book: <b>{missing.join(", ")}</b>. </> : null}
+            The sheet below counts only what is in so far — it updates as the rest arrive.
           </p>
         </div>
       )}
@@ -75,11 +80,11 @@ export default function Packing({ date }: { date: string }) {
                 <th rowSpan={2}>S.No</th>
                 <th rowSpan={2}>Section</th>
                 {sheet.indentDishes.length > 0 && (
-                  <th colSpan={sheet.indentDishes.length} style={{ background: "#fdeede" }}>Indent (plates)</th>
+                  <th colSpan={sheet.indentDishes.length} className="grp">Indent (plates)</th>
                 )}
                 <th rowSpan={2}>Total</th>
                 {sheet.dishOrder.map((d) => (
-                  <th key={d.id} colSpan={d.packingVesselKg == null ? sheet.vessels.length + 1 : 2} style={{ background: "#f3e2d0" }}>
+                  <th key={d.id} colSpan={d.packingVesselKg == null ? sheet.vessels.length + 1 : 2} className="grp">
                     {d.name}
                   </th>
                 ))}
@@ -121,11 +126,11 @@ export default function Packing({ date }: { date: string }) {
 }
 
 function Totals({ sheet }: { sheet: PackingSheet }) {
-  const r1 = (n: number) => Number(n.toFixed(1));
+  const r1 = (n: number) => Number(n.toFixed(2));
   const indentTot = sheet.indentDishes.map((d) => sheet.rows.reduce((a, r) => a + (r.plates[d.id] || 0), 0));
   const grand = sheet.rows.reduce((a, r) => a + r.totalPlates, 0);
   return (
-    <tr style={{ background: "#efe3d3", fontWeight: 700 }}>
+    <tr className="totalrow">
       <td></td>
       <td>Total</td>
       {indentTot.map((v, i) => <td key={i}>{v || ""}</td>)}
@@ -155,7 +160,7 @@ function SubHead({
       <>
         <th>Qty</th>
         {vessels.map((v) => (
-          <th key={v} style={{ color: "#b91c1c" }}>
+          <th key={v} className="vsz">
             {v}
           </th>
         ))}
@@ -165,7 +170,7 @@ function SubHead({
   return (
     <>
       <th>kg</th>
-      <th style={{ color: "#b91c1c" }}>/{d.packingVesselKg}</th>
+      <th className="vsz">/{d.packingVesselKg}</th>
     </>
   );
 }
@@ -173,7 +178,7 @@ function SubHead({
 function Cells({ qty, extra }: { qty?: number; extra: (number | string)[] }) {
   return (
     <>
-      <td style={{ fontWeight: 700 }}>{qty ? Number(qty.toFixed(1)) : ""}</td>
+      <td style={{ fontWeight: 700 }}>{qty ? Number(qty.toFixed(2)) : ""}</td>
       {extra.map((x, i) => (
         <td key={i}>{x}</td>
       ))}

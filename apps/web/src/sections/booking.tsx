@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-// The booking screen's dish shape is the lighter one the /booking-menu route
-// returns (no packing config, but it knows about accompaniments). Aliased so
-// the rest of this file, lifted verbatim from the old booking app, is unchanged.
-import { api, AuthedUser, Booking, BookingMenu, BookingDish as Dish, BookingStatus, MealStatus, Progress } from "../api";
+import {
+  api, AuthedUser, Booking, BookingStatus, DayMenu, MealStatus, MenuDish, MenuSlot,
+  Progress, SlotCounts,
+} from "../api";
 
 const today = () => new Date();
 const tomorrow = () => { const d = new Date(); d.setDate(d.getDate() + 1); return d; };
@@ -17,7 +17,6 @@ const prettyStored = (iso: string) =>
     weekday: "long", day: "numeric", month: "short", timeZone: "UTC",
   });
 const SES: Record<string, string> = { BREAKFAST: "Morning Tiffin", LUNCH: "Lunch", DINNER: "Dinner" };
-const unitLabel = (d: Dish) => (d.unit === "NOS" ? `${d.qtyPerPlate} nos/plate` : `${d.qtyPerPlate} g/plate`);
 
 function Banner() {
   return (
@@ -26,7 +25,7 @@ function Banner() {
         onLoad={(e) => { const b = document.getElementById("hero"); if (b) { b.classList.add("hasimg"); (e.currentTarget as HTMLImageElement).style.display = "block"; b.querySelector(".cap")?.remove(); } }} />
       <div className="cap">
         <h1>Book today, served tomorrow</h1>
-        <p>Choose the dishes you need and enter plate counts — tiffin and dinner, together or separately.</p>
+        <p>The kitchen sets the menu. You just enter how many plates of each item your route needs.</p>
       </div>
     </div>
   );
@@ -53,8 +52,8 @@ function GateBanner({ gate, onCloseOutNeeded }: {
       </div>
       {stuck.map(([session, v]) => (
         <p className="muted" key={session} style={{ margin: "6px 0 0" }}>
-          <b>{SES_LONG[session] ?? session}</b> — finish {v.blockedBy?.needs.join(" and ")} for{" "}
-          {v.blockedBy?.unit} on {prettyStored(v.blockedBy!.date)} before booking it again.
+          <b>{SES_LONG[session] ?? session}</b> — next step for {v.blockedBy?.unit} on{" "}
+          {prettyStored(v.blockedBy!.date)}: {v.blockedBy?.needs.join(" and ")}.
         </p>
       ))}
       {onCloseOutNeeded ? (
@@ -71,7 +70,7 @@ function BlockedNote({ status }: { status?: MealStatus }) {
   if (!status || status.canOrder) return null;
   return (
     <p className="err" style={{ margin: "8px 0 0", fontSize: 13 }}>
-      Locked until you close out {status.blockedBy?.unit} ({status.blockedBy?.needs.join(" + ")}).
+      Locked — {status.blockedBy?.unit} still needs you to {status.blockedBy?.needs.join(" and ")}.
     </p>
   );
 }
@@ -118,101 +117,23 @@ function RoutePicker({ id, progress, value, onChange }: {
   );
 }
 
-// counts: dishId -> plates (string)
-type Counts = Record<number, string>;
-// sum over non-accompaniment dishes only (accompaniments are auto-derived)
-const sum = (menu: Dish[], c: Counts) =>
-  menu.reduce((a, d) => a + (d.accompaniment ? 0 : Number(c[d.id]) || 0), 0);
-const itemsFrom = (c: Counts) =>
-  Object.entries(c).map(([id, p]) => ({ dishId: Number(id), plates: Number(p) || 0 })).filter((x) => x.plates > 0);
-// accompaniment plates = sum of Item 1 + Item 3 solid dishes (idly + wada + punugulu + …)
-const solidPlates = (menu: BookingMenu, c: Counts) => sum(menu.ITEM1, c) + sum(menu.ITEM3, c);
-
-// ---------------------------------------------------------------- the picker
-//
-// A booker orders three or four dishes out of sixteen. The screen used to
-// render all sixteen as full rows with steppers, every time — 4,232px on a
-// phone, five screens of scrolling to place one order, with the confirm button
-// stranded at the bottom. Now a meal starts empty and the booker adds the
-// dishes they want; only those get a row.
-
-const allDishes = (m: BookingMenu) => [...m.ITEM1, ...m.ITEM2, ...m.ITEM3];
-
-/** Dishes explicitly added to this meal, in menu order. A key exists in
- *  `counts` as soon as a dish is added, even while its count is still blank —
- *  that is what keeps a freshly added row on screen at zero. */
-const chosen = (menu: BookingMenu, c: Counts) =>
-  allDishes(menu).filter((d) => !d.accompaniment && c[d.id] !== undefined);
-
-/** Every accompaniment, whatever group it sits in. Their counts are derived. */
-const accompaniments = (menu: BookingMenu) => allDishes(menu).filter((d) => d.accompaniment);
-
-/** Rebuild counts from a past order's line items, which carry dish NAMES
- *  (`/bookings/recent` returns names, not ids). Dish names are unique in the
- *  schema, so the mapping is safe. Accompaniments are skipped — they are
- *  re-derived from the solids rather than copied. */
-function countsFromItems(menu: BookingMenu, items: { dish: string; plates: number }[]): Counts {
-  const byName = new Map(allDishes(menu).map((d) => [d.name, d]));
-  const out: Counts = {};
-  for (const it of items) {
-    const d = byName.get(it.dish);
-    if (d && !d.accompaniment && it.plates > 0) out[d.id] = String(it.plates);
-  }
-  return out;
-}
-
-/** A comparable fingerprint of a basket, for telling two shortcuts apart. */
-const sig = (c: Counts) =>
-  Object.entries(c)
-    .filter(([, v]) => Number(v) > 0)
-    .map(([k, v]) => `${k}:${Number(v)}`)
-    .sort()
-    .join(",");
-
-/** What this booker usually orders for a meal: the dishes present in at least
- *  half of their last few orders, at their average plate count. Offered next to
- *  "repeat last" because the most recent order is sometimes the odd one out —
- *  a festival day, a half-empty hostel — and repeating it would carry that
- *  exception forward. Needs at least two orders to mean anything. */
-function usualCounts(menu: BookingMenu, past: Booking[]): Counts | null {
-  const recent = past.slice(0, 5);
-  if (recent.length < 2) return null;
-  const seen = new Map<number, number[]>();
-  for (const o of recent) {
-    for (const [id, plates] of Object.entries(countsFromItems(menu, o.items))) {
-      const key = Number(id);
-      if (!seen.has(key)) seen.set(key, []);
-      seen.get(key)!.push(Number(plates));
-    }
-  }
-  const out: Counts = {};
-  for (const [id, plates] of seen) {
-    if (plates.length * 2 < recent.length) continue; // in fewer than half — not usual
-    out[id] = String(Math.round(plates.reduce((a, b) => a + b, 0) / plates.length));
-  }
-  return Object.keys(out).length ? out : null;
-}
-
-/** "Idly ×120 · Wada ×60" — what a shortcut will actually fill in. */
-function describe(menu: BookingMenu, c: Counts, max = 3) {
-  const byId = new Map(allDishes(menu).map((d) => [d.id, d]));
-  const parts = Object.entries(c)
-    .filter(([, v]) => Number(v) > 0)
-    .map(([id, v]) => `${byId.get(Number(id))?.name ?? "?"} ×${v}`);
-  return parts.length > max ? `${parts.slice(0, max).join(" · ")} +${parts.length - max} more` : parts.join(" · ");
-}
+// The booker enters three plate counts; the day's menu says what they are.
+// Everything that used to live here — a dish-id map, the accompaniment
+// derivation, the "describe this basket" helper — belonged to the old model
+// where a booker picked from sixteen dishes. The menu does that job now.
 
 // ---------------- NEW BOOKING (single page) ----------------
 export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
   user: AuthedUser; onBooked: () => void; onCloseOutNeeded?: () => void;
 }) {
-  const [menu, setMenu] = useState<BookingMenu | null>(null);
   const [err, setErr] = useState("");
+  // The day's menu per meal — what Item 1/2/3 actually are.
+  const [menus, setMenus] = useState<Record<string, DayMenu>>({});
 
   const [tOn, setTOn] = useState(true);
-  const [tC, setTC] = useState<Counts>({});
+  const [tC, setTC] = useState<SlotCounts>({});
   const [dOn, setDOn] = useState(false);
-  const [dC, setDC] = useState<Counts>({});
+  const [dC, setDC] = useState<SlotCounts>({});
   const [lOn, setLOn] = useState(false);
   const [lPpl, setLPpl] = useState("");
   const [eOn, setEOn] = useState(false);
@@ -269,8 +190,24 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
       .then((bs) => setPast(bs.filter((b) => b.mine && !b.isEmergency && b.items.length > 0)))
       .catch(() => {});
   }
+  // The menu for each meal we might book. Tiffin and dinner are for tomorrow;
+  // lunch and emergency are for today.
+  function loadMenus() {
+    const wanted: [string, string][] = [
+      [ymd(tomorrow()), "BREAKFAST"],
+      [ymd(tomorrow()), "DINNER"],
+      [ymd(today()), "LUNCH"],
+    ];
+    Promise.all(
+      wanted.map(([d, ses]) => api.menu(d, ses).then((m) => [pkey(d, ses), m] as const).catch(() => null))
+    ).then((rs) => {
+      const next: Record<string, DayMenu> = {};
+      for (const r of rs) if (r) next[r[0]] = r[1];
+      setMenus((prev) => ({ ...prev, ...next }));
+    });
+  }
   useEffect(() => {
-    api.bookingMenu().then(setMenu).catch((e) => setErr(e.message));
+    loadMenus();
     loadProgress();
     loadGate();
     loadPast();
@@ -284,8 +221,12 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
   const eProg = prog[pkey(ymd(today()), eSes)];
   const count = (p?: Progress) => (p ? `${p.booked}/${p.total} routes booked` : "…");
 
-  const tTotal = useMemo(() => menu ? sum(menu.ITEM1, tC) + sum(menu.ITEM2, tC) + sum(menu.ITEM3, tC) : 0, [menu, tC]);
-  const dTotal = useMemo(() => menu ? sum(menu.ITEM1, dC) + sum(menu.ITEM2, dC) + sum(menu.ITEM3, dC) : 0, [menu, dC]);
+  const totalOf = (c: SlotCounts) => (c.ITEM1 ?? 0) + (c.ITEM2 ?? 0) + (c.ITEM3 ?? 0);
+  const tTotal = useMemo(() => totalOf(tC), [tC]);
+  const dTotal = useMemo(() => totalOf(dC), [dC]);
+  const tMenu = menus[pkey(ymd(tomorrow()), "BREAKFAST")] ?? null;
+  const dMenu = menus[pkey(ymd(tomorrow()), "DINNER")] ?? null;
+  const lMenu = menus[pkey(ymd(today()), "LUNCH")] ?? null;
 
   async function confirm() {
     setBusy(true); setErr(""); setResult([]);
@@ -294,8 +235,8 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
     // unitId is omitted when the picker is left on "Auto", which makes the API
     // assign the next free route — the old behaviour.
     const pick = (v: string) => (v ? { unitId: Number(v) } : {});
-    if (tOn && itemsFrom(tC).length) jobs.push({ label: "Morning Tiffin", body: { bookedById: by, date: ymd(tomorrow()), session: "BREAKFAST", items: itemsFrom(tC), ...pick(tUnit) } });
-    if (dOn && itemsFrom(dC).length) jobs.push({ label: "Dinner", body: { bookedById: by, date: ymd(tomorrow()), session: "DINNER", items: itemsFrom(dC), ...pick(dUnit) } });
+    if (tOn && tTotal > 0) jobs.push({ label: "Morning Tiffin", body: { bookedById: by, date: ymd(tomorrow()), session: "BREAKFAST", slots: tC, ...pick(tUnit) } });
+    if (dOn && dTotal > 0) jobs.push({ label: "Dinner", body: { bookedById: by, date: ymd(tomorrow()), session: "DINNER", slots: dC, ...pick(dUnit) } });
     if (lOn && +lPpl > 0) jobs.push({ label: "Lunch", body: { bookedById: by, date: ymd(today()), session: "LUNCH", peopleCount: +lPpl, ...pick(lUnit) } });
     if (eOn && +ePpl > 0) jobs.push({ label: "Emergency " + SES[eSes], body: { bookedById: by, date: ymd(today()), session: eSes, isEmergency: true, peopleCount: +ePpl, ...pick(eUnit) } });
     if (jobs.length === 0) { setErr("Turn on a meal and enter at least one plate count."); setBusy(false); return; }
@@ -328,16 +269,16 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
         Each meal goes to the next free route unless you pick one yourself.
         Tomorrow: tiffin <b>{count(tProg)}</b>, dinner <b>{count(dProg)}</b>.
       </p>
-      {err && !menu && <p className="err">{err}</p>}
+      {err && Object.keys(menus).length === 0 && <p className="err">{err}</p>}
 
       <GateBanner gate={gate} onCloseOutNeeded={onCloseOutNeeded} />
 
       <h2>Tomorrow's meals</h2>
       <div className="grid2">
-        <MealCard title="Morning Tiffin" on={tOn} setOn={setTOn} menu={menu} counts={tC} setCounts={setTC} total={tTotal}
+        <MealCard title="Morning Tiffin" on={tOn} setOn={setTOn} menu={tMenu} counts={tC} setCounts={setTC} total={tTotal}
           id="tiffin" progress={tProg} unit={tUnit} setUnit={setTUnit} blocked={gate?.BREAKFAST}
           past={pastFor("BREAKFAST")} />
-        <MealCard title="Dinner" on={dOn} setOn={setDOn} menu={menu} counts={dC} setCounts={setDC} total={dTotal}
+        <MealCard title="Dinner" on={dOn} setOn={setDOn} menu={dMenu} counts={dC} setCounts={setDC} total={dTotal}
           id="dinner" progress={dProg} unit={dUnit} setUnit={setDUnit} blocked={gate?.DINNER}
           past={pastFor("DINNER")} />
       </div>
@@ -346,7 +287,8 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
       <div className="grid2">
         <div className={`meal ${lOn ? "on" : ""}`}>
           <div className="head"><span className="mtitle">Lunch</span><Switch on={lOn} setOn={setLOn} /></div>
-          <p className="muted" style={{ margin: "6px 0 0" }}>Same-day · before 11:00 AM · no menu</p>
+          <p className="muted" style={{ margin: "6px 0 0" }}>Same-day · before 11:00 AM · headcount only</p>
+          <LunchMenu menu={lMenu} />
           <BlockedNote status={gate?.LUNCH} />
           {lOn && <><RoutePicker id="lunch" progress={lProg} value={lUnit} onChange={setLUnit} /><Ppl value={lPpl} set={setLPpl} /></>}
         </div>
@@ -368,7 +310,7 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
         </div>
       </div>
 
-      {err && menu && <div className="err">{err}</div>}
+      {err && Object.keys(menus).length > 0 && <div className="err">{err}</div>}
       {result.length > 0 && (
         <div className="card soft" style={{ marginTop: 14 }}>
           {result.map((r, i) => <div key={i} className={r.startsWith("✓") ? "ok" : "err"} style={{ marginTop: i ? 6 : 0 }}>{r}</div>)}
@@ -400,40 +342,33 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
   );
 }
 
-const GROUP_META: { key: "ITEM1" | "ITEM2" | "ITEM3"; label: string; note: string; icon: string }[] = [
-  { key: "ITEM1", label: "Item 1", note: "Tiffin mains", icon: "ti-bowl-spoon" },
-  { key: "ITEM2", label: "Item 2", note: "Rice & gravies", icon: "ti-bowl" },
-  { key: "ITEM3", label: "Item 3", note: "Tiffin sides", icon: "ti-cookie" },
-];
+const GROUP_LABEL: Record<string, string> = { ITEM1: "Item 1", ITEM2: "Item 2", ITEM3: "Item 3" };
 
+/** How much of a dish one plate gets — "4 nos", "300 g". */
+const perPlate = (d: MenuDish) => (d.unit === "NOS" ? `${d.qtyPerPlate} nos` : `${d.qtyPerPlate} g`);
+
+/**
+ * One meal, booked the way the kitchen's own sheet works: three plate counts.
+ *
+ * The booker used to pick dishes out of a list of sixteen, which is not how
+ * any of this runs — the packing sheet's Indent block is three numbers per
+ * route, and the menu for that date decides what they are. So the form names
+ * the dishes and asks only "how many plates".
+ */
 function MealCard({ title, on, setOn, menu, counts, setCounts, total, id, progress, unit, setUnit, blocked, past }: {
-  title: string; on: boolean; setOn: (b: boolean) => void; menu: BookingMenu | null;
-  counts: Counts; setCounts: (c: Counts) => void; total: number;
+  title: string; on: boolean; setOn: (b: boolean) => void; menu: DayMenu | null;
+  counts: SlotCounts; setCounts: (c: SlotCounts) => void; total: number;
   id: string; progress?: Progress; unit: string; setUnit: (v: string) => void;
   blocked?: MealStatus;
-  /** This booker's own past orders of THIS meal, newest first — drives the shortcuts. */
+  /** This booker's own past orders of THIS meal, newest first. */
   past: Booking[];
 }) {
-  // The dish whose row was just added, so its input can take focus.
-  const [justAdded, setJustAdded] = useState<number | null>(null);
+  const slots = (menu?.slots ?? []).filter((s) => s.group);
 
-  const setOne = (dishId: number, v: string) =>
-    setCounts({ ...counts, [dishId]: v.replace(/[^0-9]/g, "") });
-  const step = (dishId: number, delta: number) => {
-    const next = Math.max(0, (Number(counts[dishId]) || 0) + delta);
-    setCounts({ ...counts, [dishId]: next === 0 ? "" : String(next) });
-  };
-  // Adding starts the dish at blank rather than 1: a mis-tap should not quietly
-  // put a plate on the order.
-  const add = (dishId: number) => { setCounts({ ...counts, [dishId]: "" }); setJustAdded(dishId); };
-  const remove = (dishId: number) => {
-    const next = { ...counts };
-    delete next[dishId];
-    setCounts(next);
-  };
-
-  const picked = menu ? chosen(menu, counts) : [];
-  const derived = menu ? solidPlates(menu, counts) : 0;
+  const set = (group: string, v: string) =>
+    setCounts({ ...counts, [group]: Number(v.replace(/[^0-9]/g, "")) || 0 });
+  const step = (group: string, delta: number) =>
+    setCounts({ ...counts, [group]: Math.max(0, (counts[group as "ITEM1"] ?? 0) + delta) });
 
   return (
     <div className={`meal ${on ? "on" : ""}`}>
@@ -445,78 +380,92 @@ function MealCard({ title, on, setOn, menu, counts, setCounts, total, id, progre
         <Switch on={on} setOn={setOn} />
       </div>
       <BlockedNote status={blocked} />
-      {!on && <p className="muted" style={{ margin: "6px 0 0" }}>Turn on to choose dishes.</p>}
+      {!on && <p className="muted" style={{ margin: "6px 0 0" }}>Turn on to enter plate counts.</p>}
 
       {on && <RoutePicker id={id} progress={progress} value={unit} onChange={setUnit} />}
-      {on && !menu && <p className="muted" style={{ marginTop: 8 }}>Loading dishes…</p>}
+      {on && !menu && <p className="muted" style={{ marginTop: 8 }}>Loading the menu…</p>}
+      {on && menu && slots.length === 0 && (
+        <p className="err" style={{ marginTop: 10, fontSize: 13 }}>
+          No menu is set for this day. Ask the kitchen to set one before booking.
+        </p>
+      )}
 
-      {on && menu && (
+      {on && slots.length > 0 && (
         <>
-          <QuickFill menu={menu} past={past} counts={counts} apply={setCounts} />
-
-          {picked.length === 0 ? (
-            <p className="muted pick-empty">Nothing added yet — pick dishes below.</p>
-          ) : (
-            <div className="picked">
-              {picked.map((d) => {
-                const val = Number(counts[d.id]) || 0;
-                return (
-                  <div className="book-row" key={d.id}>
-                    <span className="book-ic"><i className="ti ti-soup" aria-hidden="true"></i></span>
-                    <div className="info">
-                      <div className="book-name">{d.name}</div>
-                      <div className="book-sub">{unitLabel(d)}</div>
+          <QuickFill past={past} counts={counts} apply={setCounts} slots={slots} />
+          <div className="slots">
+            {slots.map((slot) => {
+              const val = counts[slot.group as "ITEM1"] ?? 0;
+              return (
+                <div className="slot" key={slot.group}>
+                  <div className="slot-info">
+                    <div className="slot-tag">{GROUP_LABEL[slot.group!] ?? slot.group}</div>
+                    <div className="slot-dish">
+                      {slot.dish.name} <span className="slot-qty">{perPlate(slot.dish)}</span>
                     </div>
-                    <div className={`stepper ${val > 0 ? "filled" : ""}`}>
-                      <button type="button" aria-label={`Decrease ${d.name}`} disabled={val === 0} onClick={() => step(d.id, -1)}>−</button>
-                      <input
-                        inputMode="numeric" placeholder="0"
-                        autoFocus={d.id === justAdded}
-                        value={counts[d.id] ?? ""}
-                        onChange={(e) => setOne(d.id, e.target.value)}
-                      />
-                      <button type="button" aria-label={`Increase ${d.name}`} onClick={() => step(d.id, +1)}>+</button>
-                    </div>
-                    <button type="button" className="row-x" aria-label={`Remove ${d.name}`} onClick={() => remove(d.id)}>
-                      <i className="ti ti-x" aria-hidden="true"></i>
-                    </button>
+                    {slot.accompaniments.length > 0 && (
+                      <div className="slot-with">
+                        with {slot.accompaniments.map((a) => `${a.name} ${perPlate(a)}`).join(" · ")}
+                      </div>
+                    )}
                   </div>
-                );
-              })}
-              {derived > 0 && (
-                <div className="derived">
-                  <span className="derived-lab">Added automatically</span>
-                  {accompaniments(menu).map((a) => (
-                    <span className="derived-chip" key={a.id}>{a.name} <b>{derived}</b></span>
-                  ))}
+                  <div className={`stepper ${val > 0 ? "filled" : ""}`}>
+                    <button type="button" aria-label={`Fewer ${slot.dish.name}`} disabled={val === 0} onClick={() => step(slot.group!, -1)}>−</button>
+                    <input
+                      inputMode="numeric" placeholder="0"
+                      aria-label={`${GROUP_LABEL[slot.group!]} plates`}
+                      value={val === 0 ? "" : String(val)}
+                      onChange={(e) => set(slot.group!, e.target.value)}
+                    />
+                    <button type="button" aria-label={`More ${slot.dish.name}`} onClick={() => step(slot.group!, +1)}>+</button>
+                  </div>
                 </div>
-              )}
-            </div>
-          )}
-
-          <DishPicker menu={menu} counts={counts} onAdd={add} onRemove={remove} />
+              );
+            })}
+          </div>
         </>
       )}
     </div>
   );
 }
 
-/** One-tap refills, built from this booker's own history. Hidden when there is
- *  no history yet, and a shortcut disappears once the basket already matches it
- *  so it never offers to do nothing. */
-function QuickFill({ menu, past, counts, apply }: {
-  menu: BookingMenu; past: Booking[]; counts: Counts; apply: (c: Counts) => void;
+/** A fingerprint of three plate counts, for telling two shortcuts apart. */
+const sigOf = (c: SlotCounts) =>
+  (["ITEM1", "ITEM2", "ITEM3"] as const).map((g) => `${g}:${c[g] ?? 0}`).join(",");
+
+/** What this booker usually orders: the average of their last few, rounded.
+ *  Offered next to "repeat last" because the most recent order is sometimes
+ *  the odd one out and repeating it carries that exception forward. */
+function usualSlots(past: Booking[]): SlotCounts | null {
+  const recent = past.slice(0, 5).filter((b) => b.slots && Object.keys(b.slots).length);
+  if (recent.length < 2) return null;
+  const out: SlotCounts = {};
+  for (const g of ["ITEM1", "ITEM2", "ITEM3"] as const) {
+    const vals = recent.map((b) => b.slots[g] ?? 0).filter((n) => n > 0);
+    if (vals.length * 2 < recent.length) continue;
+    out[g] = Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** One-tap refills from this booker's own history. A shortcut hides itself
+ *  once the form already matches it, so it never offers to do nothing. */
+function QuickFill({ past, counts, apply, slots }: {
+  past: Booking[]; counts: SlotCounts; apply: (c: SlotCounts) => void; slots: MenuSlot[];
 }) {
-  const last = past[0] ? countsFromItems(menu, past[0].items) : null;
-  const usual = usualCounts(menu, past);
-  const now = sig(counts);
+  const last = past[0]?.slots && Object.keys(past[0].slots).length ? past[0].slots : null;
+  const usual = usualSlots(past);
+  const now = sigOf(counts);
 
-  const options: { key: string; label: string; icon: string; counts: Counts }[] = [];
-  if (last && Object.keys(last).length) options.push({ key: "last", label: "Repeat last", icon: "ti-rotate", counts: last });
-  if (usual && sig(usual) !== sig(last ?? {})) options.push({ key: "usual", label: "My usual", icon: "ti-star", counts: usual });
+  const options: { key: string; label: string; icon: string; counts: SlotCounts }[] = [];
+  if (last) options.push({ key: "last", label: "Repeat last", icon: "ti-rotate", counts: last });
+  if (usual && sigOf(usual) !== sigOf(last ?? {})) options.push({ key: "usual", label: "My usual", icon: "ti-star", counts: usual });
 
-  const show = options.filter((o) => sig(o.counts) !== now);
+  const show = options.filter((o) => sigOf(o.counts) !== now);
   if (show.length === 0) return null;
+
+  const describe = (c: SlotCounts) =>
+    slots.map((s) => `${s.dish.name} ${c[s.group as "ITEM1"] ?? 0}`).join(" · ");
 
   return (
     <div className="quickfill">
@@ -525,7 +474,7 @@ function QuickFill({ menu, past, counts, apply }: {
           <i className={`ti ${o.icon}`} aria-hidden="true"></i>
           <span className="qf-text">
             <span className="qf-title">{o.label}</span>
-            <span className="qf-sub">{describe(menu, o.counts)}</span>
+            <span className="qf-sub">{describe(o.counts)}</span>
           </span>
         </button>
       ))}
@@ -533,67 +482,19 @@ function QuickFill({ menu, past, counts, apply }: {
   );
 }
 
-/** Search + chips. Sixteen dishes fit in four rows here instead of sixteen
- *  full-height rows with steppers nobody is going to touch. */
-function DishPicker({ menu, counts, onAdd, onRemove }: {
-  menu: BookingMenu; counts: Counts; onAdd: (id: number) => void; onRemove: (id: number) => void;
-}) {
-  const [q, setQ] = useState("");
-  const needle = q.trim().toLowerCase();
-  const groups = GROUP_META
-    .map((g) => ({
-      ...g,
-      dishes: menu[g.key].filter(
-        (d) => !d.accompaniment && (!needle || d.name.toLowerCase().includes(needle))
-      ),
-    }))
-    .filter((g) => g.dishes.length > 0);
-
+/** Lunch is a headcount, so its menu is shown rather than ordered. */
+function LunchMenu({ menu }: { menu: DayMenu | null }) {
+  if (!menu || menu.slots.length === 0) return null;
   return (
-    <div className="dish-picker">
-      <div className="dp-search">
-        <i className="ti ti-search" aria-hidden="true"></i>
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search dishes…"
-          aria-label="Search dishes"
-        />
-        {q && (
-          <button type="button" className="dp-clear" aria-label="Clear search" onClick={() => setQ("")}>
-            <i className="ti ti-x" aria-hidden="true"></i>
-          </button>
-        )}
+    <div className="lunch-menu">
+      <span className="lm-lab">Today's menu</span>
+      <div className="lm-items">
+        {menu.slots.map((s) => <span className="lm-item" key={s.dish.id}>{s.dish.name}</span>)}
       </div>
-
-      {groups.length === 0 && <p className="muted" style={{ margin: "10px 0 0" }}>No dish matches “{q}”.</p>}
-
-      {groups.map((g) => (
-        <div className="dp-group" key={g.key}>
-          <div className="dp-label">
-            <i className={`ti ${g.icon}`} aria-hidden="true"></i> {g.label} · {g.note}
-          </div>
-          <div className="dp-chips">
-            {g.dishes.map((d) => {
-              const on = counts[d.id] !== undefined;
-              return (
-                <button
-                  type="button" key={d.id}
-                  className={`dp-chip ${on ? "on" : ""}`}
-                  aria-pressed={on}
-                  onClick={() => (on ? onRemove(d.id) : onAdd(d.id))}
-                >
-                  <i className={`ti ${on ? "ti-check" : "ti-plus"}`} aria-hidden="true"></i>
-                  {d.name}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      ))}
     </div>
   );
 }
+
 
 function Switch({ on, setOn }: { on: boolean; setOn: (b: boolean) => void }) {
   return (<label className="switch"><input type="checkbox" checked={on} onChange={(e) => setOn(e.target.checked)} /><span className="sl" /></label>);
@@ -693,11 +594,41 @@ export function MyBookings({ onCloseOut }: { user: AuthedUser; onCloseOut: (b: B
 // ---------------- CLOSE OUT (per main item) ----------------
 type Line = { dishId: number; name: string; ordered: number; consumed: string };
 
+type Stage = "CONSUMPTION" | "AWAITING_VERIFICATION" | "FEEDBACK" | "DONE";
+
+const STAGE_STEP: Record<Stage, number> = {
+  CONSUMPTION: 1,
+  AWAITING_VERIFICATION: 2,
+  FEEDBACK: 3,
+  DONE: 3,
+};
+
+/** The three-step close-out, shown as a strip so the booker can see where they are. */
+function Steps({ stage }: { stage: Stage }) {
+  const at = STAGE_STEP[stage];
+  const labels = ["Consumption", "Verification", "Feedback"];
+  return (
+    <ol className="steps" aria-label="Close-out progress">
+      {labels.map((l, i) => {
+        const n = i + 1;
+        const state = stage === "DONE" || n < at ? "done" : n === at ? "now" : "todo";
+        return (
+          <li key={l} className={`step ${state}`} aria-current={state === "now" ? "step" : undefined}>
+            <span className="step-n">{state === "done" ? "\u2713" : n}</span>
+            <span className="step-l">{l}</span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 export function CloseOut({ preset, onDone }: { user: AuthedUser; preset: Booking | null; onDone: () => void }) {
   const [booking, setBooking] = useState<Booking | null>(preset);
   const [list, setList] = useState<Booking[]>([]);
   const [lines, setLines] = useState<Line[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
+  const [stage, setStage] = useState<Stage>("CONSUMPTION");
   const [taste, setTaste] = useState(0);
   const [quality, setQuality] = useState(0);
   const [remarks, setRemarks] = useState("");
@@ -717,17 +648,21 @@ export function CloseOut({ preset, onDone }: { user: AuthedUser; preset: Booking
   // submitted last time so a correction starts from the previous numbers
   // rather than from blank.
   useEffect(() => {
-    if (!booking) { setLines([]); setSentBack(null); return; }
+    if (!booking) { setLines([]); setSentBack(null); setStage("CONSUMPTION"); return; }
     setLoadingItems(true);
+    setErr(""); setOk("");
     api.closeoutItems(booking.id)
       .then((r) => {
         setLines(r.items.map((it) => ({ ...it, consumed: it.consumed == null ? "" : String(it.consumed) })));
+        setStage(r.stage);
         if (r.previous) {
           setNotes(r.previous.notes ?? "");
           setTaste(r.previous.taste ?? 0);
           setQuality(r.previous.quality ?? 0);
           setRemarks(r.previous.remarks ?? "");
           setSentBack(r.previous.status === "REJECTED" ? (r.previous.rejectionReason || "no reason given") : null);
+        } else {
+          setNotes(""); setTaste(0); setQuality(0); setRemarks(""); setSentBack(null);
         }
       })
       .catch((e) => setErr(e.message))
@@ -748,18 +683,30 @@ export function CloseOut({ preset, onDone }: { user: AuthedUser; preset: Booking
     }));
   }
 
-  async function submit() {
+  async function sendConsumption() {
     if (!booking) return;
-    if (!taste || !quality) { setErr("Feedback required: rate taste and quality."); return; }
     setBusy(true); setErr(""); setOk("");
     try {
       await api.submitConsumption({
         orderId: booking.id,
         items: lines.map((l) => ({ dishId: l.dishId, consumed: Number(l.consumed) || 0 })),
-        notes, taste, quality, remarks,
+        notes,
       });
-      setOk("Submitted — this meal is closed out, so you can book it again now. It also goes to verification for approval.");
-      setTimeout(onDone, 1300);
+      setStage("AWAITING_VERIFICATION");
+      setSentBack(null);
+      setOk("Sent to the verification team. They will check the numbers, and then the feedback step opens here.");
+    } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+  }
+
+  async function sendFeedback() {
+    if (!booking) return;
+    if (!taste || !quality) { setErr("Rate both taste and quality."); return; }
+    setBusy(true); setErr(""); setOk("");
+    try {
+      await api.submitFeedback({ orderId: booking.id, taste, quality, remarks });
+      setStage("DONE");
+      setOk("Thank you \u2014 this meal is closed. You can book this route again now.");
+      setTimeout(onDone, 1600);
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   }
 
@@ -771,22 +718,28 @@ export function CloseOut({ preset, onDone }: { user: AuthedUser; preset: Booking
         <div className="card">
           <h2 style={{ marginTop: 0 }}>Pick a meal to close out</h2>
           {list.length === 0 ? <p className="muted">Nothing to close out right now.</p> :
-            list.map((b) => (
-              <div className="between" key={b.id} style={{ padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
-                <div>
-                  <b>{b.unit}</b> · {SES[b.session]} · <span className="muted">{new Date(b.date).toDateString()}</span>
-                  {b.consumptionStatus === "REJECTED" && (
-                    <div className="returned-why">
-                      <i className="ti ti-arrow-back-up" aria-hidden="true"></i>
-                      <span><b>Sent back:</b> {b.rejectionReason || "no reason given"}</span>
-                    </div>
-                  )}
+            list.map((b) => {
+              const waiting = b.consumptionStatus === "PENDING";
+              const forFeedback = b.consumptionStatus === "VERIFIED" && !b.hasFeedback;
+              return (
+                <div className="between" key={b.id} style={{ padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
+                  <div>
+                    <b>{b.unit}</b> · {SES[b.session]} · <span className="muted">{new Date(b.date).toDateString()}</span>
+                    {b.consumptionStatus === "REJECTED" && (
+                      <div className="returned-why">
+                        <i className="ti ti-arrow-back-up" aria-hidden="true"></i>
+                        <span><b>Sent back:</b> {b.rejectionReason || "no reason given"}</span>
+                      </div>
+                    )}
+                    {waiting && <div className="muted" style={{ marginTop: 3 }}>Waiting on verification</div>}
+                    {forFeedback && <div className="muted" style={{ marginTop: 3 }}>Verified \u2014 feedback is open</div>}
+                  </div>
+                  <button className={`btn sm ${waiting ? "ghost" : ""}`} onClick={() => setBooking(b)}>
+                    {b.consumptionStatus === "REJECTED" ? "Fix" : forFeedback ? "Give feedback" : waiting ? "View" : "Select"}
+                  </button>
                 </div>
-                <button className="btn sm" onClick={() => setBooking(b)}>
-                  {b.consumptionStatus === "REJECTED" ? "Fix" : "Select"}
-                </button>
-              </div>
-            ))}
+              );
+            })}
         </div>
       )}
 
@@ -797,6 +750,7 @@ export function CloseOut({ preset, onDone }: { user: AuthedUser; preset: Booking
               <div><b>{booking.unit}</b> · {SES[booking.session]} · {new Date(booking.date).toDateString()}</div>
               <button className="btn ghost sm" onClick={() => { setBooking(null); refreshList(); }}>Change order</button>
             </div>
+            <Steps stage={stage} />
           </div>
 
           {sentBack && (
@@ -805,53 +759,92 @@ export function CloseOut({ preset, onDone }: { user: AuthedUser; preset: Booking
               <div>
                 <b>Verification sent this back</b>
                 <p>{sentBack}</p>
-                <p className="muted">Your previous figures are filled in below — change what needs changing and send it again.</p>
+                <p className="muted">Your previous figures are filled in below \u2014 change what needs changing and send it again.</p>
               </div>
             </div>
           )}
 
-          <div className="card">
-            <div className="section-title">1 · Consumption (main items)</div>
-            <p className="muted" style={{ margin: "4px 0 8px" }}>Enter plates consumed — leftover is worked out for you.</p>
-            {loadingItems && <p className="muted">Loading items…</p>}
-            {lines.map((l) => {
-              const c = Number(l.consumed) || 0;
-              const left = Math.max(0, l.ordered - c);
-              const extra = c > l.ordered ? c - l.ordered : 0;
-              return (
-                <div className="book-row" key={l.dishId}>
-                  <span className="book-ic"><i className="ti ti-bowl" aria-hidden="true"></i></span>
-                  <div className="info">
-                    <div className="book-name">{l.name}</div>
-                    <div className="book-sub">
-                      Ordered {l.ordered} · Leftover {left}{extra ? ` · +${extra} extra` : ""}
+          {(stage === "CONSUMPTION" || stage === "AWAITING_VERIFICATION") && (
+            <div className="card">
+              <div className="section-title">Step 1 · What was actually consumed</div>
+              <p className="muted" style={{ margin: "4px 0 8px" }}>
+                {stage === "CONSUMPTION"
+                  ? "Enter plates consumed \u2014 leftover is worked out for you."
+                  : "Submitted. These are the figures the team is checking."}
+              </p>
+              {loadingItems && <p className="muted">Loading items\u2026</p>}
+              {lines.map((l) => {
+                const c = Number(l.consumed) || 0;
+                const left = Math.max(0, l.ordered - c);
+                const extra = c > l.ordered ? c - l.ordered : 0;
+                return (
+                  <div className="book-row" key={l.dishId}>
+                    <span className="book-ic"><i className="ti ti-bowl" aria-hidden="true"></i></span>
+                    <div className="info">
+                      <div className="book-name">{l.name}</div>
+                      <div className="book-sub">
+                        Ordered {l.ordered} · Leftover {left}{extra ? ` · +${extra} extra` : ""}
+                      </div>
                     </div>
+                    {stage === "CONSUMPTION" ? (
+                      <div className={`stepper ${c > 0 ? "filled" : ""}`}>
+                        <button type="button" aria-label={`Decrease ${l.name}`} disabled={c === 0} onClick={() => stepConsumed(l.dishId, -1)}>−</button>
+                        <input inputMode="numeric" placeholder="0" value={l.consumed} onChange={(e) => setConsumed(l.dishId, e.target.value)} />
+                        <button type="button" aria-label={`Increase ${l.name}`} onClick={() => stepConsumed(l.dishId, +1)}>+</button>
+                      </div>
+                    ) : (
+                      <div className="readnum">{c}</div>
+                    )}
                   </div>
-                  <div className={`stepper ${c > 0 ? "filled" : ""}`}>
-                    <button type="button" aria-label={`Decrease ${l.name}`} disabled={c === 0} onClick={() => stepConsumed(l.dishId, -1)}>−</button>
-                    <input inputMode="numeric" placeholder="0" value={l.consumed} onChange={(e) => setConsumed(l.dishId, e.target.value)} />
-                    <button type="button" aria-label={`Increase ${l.name}`} onClick={() => stepConsumed(l.dishId, +1)}>+</button>
-                  </div>
-                </div>
-              );
-            })}
-            <div className="between" style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)", fontWeight: 800 }}>
-              <span>Total</span>
-              <span>{consumedTotal} / {orderedTotal} plates{orderedTotal - consumedTotal > 0 ? ` · ${orderedTotal - consumedTotal} leftover` : ""}</span>
+                );
+              })}
+              <div className="between" style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)", fontWeight: 800 }}>
+                <span>Total</span>
+                <span>{consumedTotal} / {orderedTotal} plates{orderedTotal - consumedTotal > 0 ? ` · ${orderedTotal - consumedTotal} leftover` : ""}</span>
+              </div>
+              {stage === "CONSUMPTION" && (
+                <>
+                  <label className="lab" style={{ marginTop: 14 }}>Notes (optional)</label>
+                  <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="anything for the kitchen" />
+                </>
+              )}
             </div>
-            <label className="lab" style={{ marginTop: 14 }}>Notes (optional)</label>
-            <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="anything for the kitchen" />
-          </div>
+          )}
 
-          <div className="card">
-            <h2 style={{ marginTop: 0 }}>2 · Feedback (required)</h2>
-            <Stars label="Taste" v={taste} set={setTaste} />
-            <Stars label="Quality" v={quality} set={setQuality} />
-            <label className="lab" style={{ marginTop: 10 }}>Remarks (optional)</label>
-            <input value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="taste / quality comments" />
-          </div>
+          {stage === "CONSUMPTION" && (
+            <button className="btn block" disabled={busy} onClick={sendConsumption}>
+              {busy ? "Sending\u2026" : "Send to verification"}
+            </button>
+          )}
 
-          <button className="btn block" disabled={busy} onClick={submit}>{busy ? "Submitting…" : "Submit & send to verification"}</button>
+          {stage === "AWAITING_VERIFICATION" && (
+            <div className="card soft">
+              <div className="section-title">Step 2 · With the verification team</div>
+              <p className="muted" style={{ marginTop: 6 }}>
+                Nothing to do here. Once they approve the figures, the feedback step opens on this
+                screen and you will get a notification. If they send it back, the reason shows here
+                and you can correct the numbers.
+              </p>
+            </div>
+          )}
+
+          {(stage === "FEEDBACK" || stage === "DONE") && (
+            <div className="card">
+              <div className="section-title">Step 3 · How was the food?</div>
+              <p className="muted" style={{ margin: "4px 0 10px" }}>
+                Your figures are verified. This last step closes the meal and lets you book this route again.
+              </p>
+              <Stars label="Taste" v={taste} set={setTaste} />
+              <Stars label="Quality" v={quality} set={setQuality} />
+              <label className="lab" style={{ marginTop: 10 }}>Anything wrong with the food? (optional)</label>
+              <input value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="e.g. sambar arrived cold, idly short by 20" />
+              {stage === "FEEDBACK" && (
+                <button className="btn block" style={{ marginTop: 14 }} disabled={busy} onClick={sendFeedback}>
+                  {busy ? "Saving\u2026" : "Submit feedback & close this meal"}
+                </button>
+              )}
+            </div>
+          )}
         </>
       )}
       {err && <div className="err">{err}</div>}

@@ -4,10 +4,37 @@ import { canPlaceOrder, type Session as Sess } from "@sk/logic";
 import { notifyRoles, notifyUsers } from "../notify.js";
 import { must, requireAuth, requireRole } from "../guard.js";
 import { dayRange } from "../time.js";
+import { expandSlots, menuFor } from "../menu.js";
 
 const SES_LABEL: Record<string, string> = { BREAKFAST: "Tiffin", LUNCH: "Lunch", DINNER: "Dinner" };
 
 export default async function orderRoutes(app: FastifyInstance) {
+  // What is on the menu for one date and meal.
+  //
+  // This is what makes the three-number booking form possible: the booker is
+  // told "Item 1 is Idly today" rather than being asked to pick it out of a
+  // list of sixteen. Accompaniments come back too, so the screen can show
+  // what is added automatically.
+  app.get<{ Querystring: { date: string; session: string } }>(
+    "/menu",
+    { preHandler: requireAuth },
+    async (req) => {
+      const slots = await menuFor(new Date(req.query.date), req.query.session);
+      return {
+        date: req.query.date,
+        session: req.query.session,
+        slots: slots.map((s) => ({
+          group: s.group,
+          sortOrder: s.sortOrder,
+          dish: { id: s.dish.id, name: s.dish.name, qtyPerPlate: s.dish.qtyPerPlate, unit: s.dish.unit },
+          accompaniments: s.accompaniments.map((a) => ({
+            id: a.dish.id, name: a.dish.name, qtyPerPlate: a.dish.qtyPerPlate, unit: a.dish.unit,
+          })),
+        })),
+      };
+    }
+  );
+
   // Bookable dishes grouped Item 1 / 2 / 3 (same list every day).
   app.get("/booking-menu", { preHandler: requireAuth }, async () => {
     const dishes = await prisma.dish.findMany({
@@ -37,14 +64,11 @@ export default async function orderRoutes(app: FastifyInstance) {
       orderBy: { date: "desc" },
     });
     if (!open) return { canOrder: true, reason: "No open order.", order: null };
-    const needs: string[] = [];
-    if (open.status !== "DELIVERED" && !open.consumption) needs.push("await delivery");
-    if (!open.consumption) needs.push("submit consumption");
-    if (!open.feedback) needs.push("submit feedback");
-    if (open.consumption && open.consumption.status !== "VERIFIED") needs.push("await verification");
+    const step = nextStep(open);
+    const needs = step === "nothing" ? [] : [step];
     return {
       canOrder: needs.length === 0,
-      reason: needs.join(" + ") || "Ready.",
+      reason: needs[0] ?? "Ready.",
       openOrderId: open.id,
       order: {
         id: open.id,
@@ -75,11 +99,19 @@ export default async function orderRoutes(app: FastifyInstance) {
       peopleCount: o.peopleCount,
       totalPlates: o.totalPlates,
       items: o.items.map((it) => ({ dish: it.dish.name, plates: it.plates })),
+      // The three numbers the booker actually typed. Each main dish carries
+      // its own item group, so this needs no menu lookup — and it is what
+      // "repeat last" refills, since the dishes themselves change with the day.
+      slots: o.items.reduce((acc, it) => {
+        if (it.dish.accompaniment) return acc;
+        acc[it.dish.group] = (acc[it.dish.group] ?? 0) + it.plates;
+        return acc;
+      }, {} as Record<string, number>),
       status: o.status,
       hasConsumption: !!o.consumption,
       hasFeedback: !!o.feedback,
       consumptionStatus: o.consumption?.status ?? null,
-      needsCloseOut: !o.consumption || !o.feedback,
+      needsCloseOut: !o.consumption || !o.feedback || o.consumption.status === "REJECTED",
     }));
   });
 
@@ -97,6 +129,9 @@ export default async function orderRoutes(app: FastifyInstance) {
       isEmergency?: boolean;
       bookedById?: number;
       items?: { dishId: number; plates: number }[];
+      /** The normal path: plate counts per booking line, expanded via the
+       *  day's menu. `items` remains for callers that name dishes directly. */
+      slots?: Partial<Record<"ITEM1" | "ITEM2" | "ITEM3", number>>;
       peopleCount?: number;
       /** Route to book. Omit to auto-assign the next free one. */
       unitId?: number;
@@ -170,27 +205,47 @@ export default async function orderRoutes(app: FastifyInstance) {
     }
     const assignedUnitId = chosenUnit.id;
 
-    // Booker's entered items (accompaniments are ignored if sent — derived below).
-    const allDishes = await prisma.dish.findMany({ where: { bookable: true } });
-    const byId = new Map(allDishes.map((d) => [d.id, d]));
-    const entered = (b.items ?? [])
-      .filter((it) => it.dishId && it.plates > 0)
-      .filter((it) => !byId.get(it.dishId)?.accompaniment);
+    // Turn what the booker sent into order lines.
+    //
+    // Normally that is three plate counts, expanded through the day's menu:
+    // the menu knows which dish each line is and what comes with it. A caller
+    // may still name dishes directly via `items`, which is how the older
+    // clients and the end-to-end test work; that path derives accompaniments
+    // the old way, from the Item 1 + Item 3 totals.
+    let finalItems: { dishId: number; plates: number }[] = [];
+    let totalPlates = 0;
 
-    if (b.session !== "LUNCH" && !b.isEmergency && entered.length === 0)
-      return reply.code(422).send({ error: "Add at least one dish with a plate count." });
+    if (b.slots && Object.keys(b.slots).length > 0) {
+      const expanded = await expandSlots(forDate, b.session, b.slots);
+      if (expanded.missing)
+        return reply.code(422).send({
+          error: `No menu is set for ${SES_LABEL[b.session] ?? b.session} on this day. Ask the kitchen to set one.`,
+        });
+      if (expanded.totalPlates === 0)
+        return reply.code(422).send({ error: "Enter a plate count for at least one item." });
+      finalItems = expanded.items;
+      totalPlates = expanded.totalPlates;
+    } else {
+      const allDishes = await prisma.dish.findMany({ where: { bookable: true } });
+      const byId = new Map(allDishes.map((d) => [d.id, d]));
+      const entered = (b.items ?? [])
+        .filter((it) => it.dishId && it.plates > 0)
+        .filter((it) => !byId.get(it.dishId)?.accompaniment);
 
-    // Accompaniment plates = sum of Item 1 + Item 3 solid (non-accompaniment) plates.
-    const solidTotal = entered.reduce((a, it) => {
-      const g = byId.get(it.dishId)?.group;
-      return g === "ITEM1" || g === "ITEM3" ? a + it.plates : a;
-    }, 0);
-    const accDishes = allDishes.filter((d) => d.accompaniment);
-    const derived =
-      solidTotal > 0 ? accDishes.map((d) => ({ dishId: d.id, plates: solidTotal })) : [];
+      if (b.session !== "LUNCH" && !b.isEmergency && entered.length === 0)
+        return reply.code(422).send({ error: "Add at least one dish with a plate count." });
 
-    const finalItems = [...entered, ...derived];
-    const totalPlates = entered.reduce((a, it) => a + it.plates, 0); // booker plates (no double-count)
+      const solidTotal = entered.reduce((a, it) => {
+        const g = byId.get(it.dishId)?.group;
+        return g === "ITEM1" || g === "ITEM3" ? a + it.plates : a;
+      }, 0);
+      const accDishes = allDishes.filter((d) => d.accompaniment);
+      const derived =
+        solidTotal > 0 ? accDishes.map((d) => ({ dishId: d.id, plates: solidTotal })) : [];
+
+      finalItems = [...entered, ...derived];
+      totalPlates = entered.reduce((a, it) => a + it.plates, 0);
+    }
 
     try {
       const order = await prisma.order.create({
@@ -241,10 +296,12 @@ export default async function orderRoutes(app: FastifyInstance) {
   //   out tiffin in the morning, and dinner is not delivered until evening — so
   //   you could not book the next day's tiffin before the cutoff.
   //
-  //   Close-out, not verification. Requiring an approved verification would put
-  //   the verification team on the critical path of every booking; miss it
-  //   before the cutoff and that route cannot order. Verification still gates
-  //   nothing here — it remains the finance/accuracy step downstream.
+  //   Verification IS on the critical path, deliberately. The kitchen asked for
+  //   consumption -> verification -> feedback -> next order, in that order, so a
+  //   route that has not been checked cannot keep booking. The cost is real: if
+  //   nobody verifies before the cutoff, that route misses a meal. The queue is
+  //   small and same-day, and the alternative — letting unchecked figures pile
+  //   up — is what the chain exists to prevent.
   //
   // Emergency orders are exempt, by definition.
   async function blockingOrder(bookedById: number, session: string) {
@@ -259,10 +316,19 @@ export default async function orderRoutes(app: FastifyInstance) {
       orderBy: { date: "asc" },
     });
     if (!open) return null;
-    const needs: string[] = [];
-    if (!open.consumption) needs.push("consumption");
-    if (!open.feedback) needs.push("feedback");
-    return { order: open, needs };
+    return { order: open, needs: [nextStep(open)] };
+  }
+
+  /** The one thing standing between this order and the route's next booking. */
+  function nextStep(o: {
+    consumption: { status: string } | null;
+    feedback: unknown | null;
+  }): string {
+    if (!o.consumption) return "enter consumption";
+    if (o.consumption.status === "REJECTED") return "correct the consumption that was sent back";
+    if (o.consumption.status !== "VERIFIED") return "wait for verification";
+    if (!o.feedback) return "give feedback on the food";
+    return "nothing";
   }
 
 
@@ -333,6 +399,7 @@ export default async function orderRoutes(app: FastifyInstance) {
       items: o.items.map((it) => ({ dish: it.dish.name, plates: it.plates })),
       status: o.status,
       consumptionStatus: o.consumption?.status ?? null,
+      hasFeedback: !!o.feedback,
       // Why it was sent back, so the booker can fix the right thing.
       rejectionReason: o.consumption?.rejectionReason ?? null,
       amount: o.consumption?.amount ?? null,
@@ -390,10 +457,24 @@ export default async function orderRoutes(app: FastifyInstance) {
         consumed: before.has(it.dishId) ? before.get(it.dishId)! : null,
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
+    // Which of the two steps the booker is on. The screen reads this rather
+    // than working it out from three separate booleans.
+    const stage: "CONSUMPTION" | "AWAITING_VERIFICATION" | "FEEDBACK" | "DONE" = !order.consumption
+      ? "CONSUMPTION"
+      : order.consumption.status === "REJECTED"
+        ? "CONSUMPTION"
+        : order.consumption.status === "PENDING"
+          ? "AWAITING_VERIFICATION"
+          : order.feedback
+            ? "DONE"
+            : "FEEDBACK";
+
     return {
       orderId: order.id,
       unit: order.unit.name,
       session: order.session,
+      date: order.date,
+      stage,
       items,
       previous: order.consumption
         ? {
@@ -408,21 +489,20 @@ export default async function orderRoutes(app: FastifyInstance) {
     };
   });
 
-  // Submit consumption (per main item) + mandatory feedback.
+  // Step 1 of the close-out: how many plates were actually consumed.
+  //
+  // Feedback used to be collected in this same call. It is now a separate step
+  // that opens only after the team has verified these numbers — the kitchen
+  // wants the counts checked before it reads what anyone thought of the food,
+  // so a complaint arrives attached to figures someone has already stood behind.
   app.post<{
     Body: {
       orderId: number;
       items: { dishId: number; consumed: number }[];
       notes?: string;
-      taste: number;
-      quality: number;
-      remarks?: string;
     };
   }>("/orders/consumption", { preHandler: requireRole("BOOKING") }, async (req, reply) => {
     const b = req.body;
-    if (!b.taste || !b.quality)
-      return reply.code(422).send({ error: "Feedback (taste + quality) is mandatory." });
-
     const order = await prisma.order.findUnique({
       where: { id: b.orderId },
       include: { items: { include: { dish: true } }, unit: true },
@@ -460,11 +540,6 @@ export default async function orderRoutes(app: FastifyInstance) {
       await tx.consumptionItem.createMany({
         data: rows.map((r) => ({ consumptionId: cons.id, dishId: r.dishId, ordered: r.ordered, consumed: r.consumed })),
       });
-      await tx.feedback.upsert({
-        where: { orderId: b.orderId },
-        update: { taste: b.taste, quality: b.quality, remarks: b.remarks },
-        create: { orderId: b.orderId, taste: b.taste, quality: b.quality, remarks: b.remarks },
-      });
     });
     // Tell verification + super admin a close-out is waiting.
     await notifyRoles(["VERIFICATION_ADMIN", "SUPER_ADMIN"], {
@@ -474,6 +549,52 @@ export default async function orderRoutes(app: FastifyInstance) {
       section: "verify",
       orderId: order.id,
     });
+    return { ok: true };
+  });
+
+  // Step 2 of the close-out: how the food was. Opens only once the consumption
+  // for this order has been verified, and completing it is what closes the
+  // order and lets the route book again.
+  app.post<{
+    Body: { orderId: number; taste: number; quality: number; remarks?: string };
+  }>("/orders/feedback", { preHandler: requireRole("BOOKING") }, async (req, reply) => {
+    const { orderId, taste, quality } = req.body;
+    const remarks = (req.body.remarks ?? "").trim();
+    if (!taste || !quality)
+      return reply.code(422).send({ error: "Rate both taste and quality." });
+
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: { consumption: true, unit: true },
+    });
+    if (!order) return reply.code(404).send({ error: "Order not found." });
+    if (!order.consumption)
+      return reply.code(409).send({ error: "Enter the consumption first." });
+    if (order.consumption.status === "REJECTED")
+      return reply.code(409).send({ error: "This close-out was sent back — fix the consumption first." });
+    if (order.consumption.status !== "VERIFIED")
+      return reply.code(409).send({ error: "Feedback opens once the team has verified your consumption." });
+
+    await prisma.$transaction(async (tx) => {
+      await tx.feedback.upsert({
+        where: { orderId },
+        update: { taste, quality, remarks },
+        create: { orderId, taste, quality, remarks },
+      });
+      await tx.order.update({ where: { id: orderId }, data: { status: "CLOSED" } });
+    });
+
+    // A low score, or anything written in the box, is something the kitchen
+    // should see the same day rather than at the end of the month.
+    if (Math.min(taste, quality) <= 3 || remarks) {
+      await notifyRoles(["KITCHEN_ADMIN", "SUPER_ADMIN"], {
+        type: "FEEDBACK",
+        title: Math.min(taste, quality) <= 3 ? "Low feedback score" : "Feedback received",
+        body: `${order.unit.name} · ${SES_LABEL[order.session] ?? order.session} — taste ${taste}/5, quality ${quality}/5${remarks ? `: ${remarks}` : ""}`,
+        section: "orders",
+        orderId,
+      });
+    }
     return { ok: true };
   });
 
@@ -554,7 +675,7 @@ export default async function orderRoutes(app: FastifyInstance) {
     const cons = await prisma.consumption.findMany({
       where: { status: "PENDING" },
       include: {
-        order: { include: { unit: true, feedback: true } },
+        order: { include: { unit: true } },
         items: { include: { dish: true } },
       },
       orderBy: { createdAt: "asc" },
@@ -568,9 +689,6 @@ export default async function orderRoutes(app: FastifyInstance) {
       consumed: c.consumedQty,
       leftover: c.leftoverQty,
       notes: c.notes,
-      taste: c.order.feedback?.taste ?? null,
-      quality: c.order.feedback?.quality ?? null,
-      remarks: c.order.feedback?.remarks ?? null,
       items: c.items
         .map((it) => ({
           name: it.dish.name,
@@ -654,13 +772,24 @@ export default async function orderRoutes(app: FastifyInstance) {
           ...(approve ? { amount } : {}),
         },
       });
-      if (approve) await prisma.order.update({ where: { id: orderId }, data: { status: "CLOSED" } });
-      // Notify the booker of the verification outcome.
-      const order = await prisma.order.findUnique({ where: { id: orderId }, include: { unit: true } });
+      // Approving no longer closes the order. Feedback is the last step, and
+      // it is what closes it — see POST /orders/feedback.
+      const order = await prisma.order.findUnique({
+        where: { id: orderId },
+        include: { unit: true, feedback: true },
+      });
+      if (approve && order?.feedback)
+        await prisma.order.update({ where: { id: orderId }, data: { status: "CLOSED" } });
       if (order?.bookedById) {
         const where = `${order.unit.name} · ${SES_LABEL[order.session] ?? order.session}`;
         await notifyUsers([order.bookedById], approve
-          ? { type: "VERIFIED", title: "Meal verified ✓", body: `${where} is verified and closed. You can place your next order.`, section: "mine", orderId }
+          ? {
+              type: "VERIFIED",
+              title: "Consumption verified ✓",
+              body: `${where} — one step left: tell us how the food was, then you can book again.`,
+              section: "close",
+              orderId,
+            }
           : { type: "REJECTED", title: "Close-out returned", body: `${where} — ${reason}`, section: "close", orderId });
       }
       return { ok: true, amount };

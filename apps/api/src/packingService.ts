@@ -42,15 +42,20 @@ export async function coverage(date: Date, session: Session) {
   const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   const end = new Date(start);
   end.setDate(end.getDate() + 1);
-  const total = await prisma.unit.count();
-  const booked = (
-    await prisma.order.findMany({
-      where: { date: { gte: start, lt: end }, session },
-      distinct: ["unitId"],
-      select: { unitId: true },
-    })
-  ).length;
-  return { total, booked, ready: booked >= total && total > 0 };
+  const units = await prisma.unit.findMany({ select: { id: true, name: true }, orderBy: { id: "asc" } });
+  const bookedIds = new Set(
+    (
+      await prisma.order.findMany({
+        where: { date: { gte: start, lt: end }, session },
+        distinct: ["unitId"],
+        select: { unitId: true },
+      })
+    ).map((o) => o.unitId)
+  );
+  const missing = units.filter((u) => !bookedIds.has(u.id)).map((u) => u.name);
+  const total = units.length;
+  const booked = total - missing.length;
+  return { total, booked, missing, ready: missing.length === 0 && total > 0 };
 }
 
 export async function computeSession(date: Date, session: Session): Promise<SessionSheet | null> {
@@ -224,7 +229,7 @@ function renderBlock(
     put(r, C_TOTAL, row.totalPlates || null, { bold: true }); addTot(C_TOTAL, row.totalPlates);
     for (const { d, c0 } of dishCols) {
       const c = row.cells[d.name];
-      const qty = c ? Number(c.qty.toFixed(1)) : null;
+      const qty = c ? Number(c.qty.toFixed(2)) : null;
       put(r, c0, qty); if (qty) addTot(c0, qty);
       if (d.packingVesselKg == null) {
         sheet.vessels.forEach((v, k) => { const n = c?.vessels?.[v] || null; put(r, c0 + 1 + k, n); if (n) addTot(c0 + 1 + k, n); });
@@ -239,7 +244,7 @@ function renderBlock(
   put(r, C_SNO, "", { bold: true, fill: TOTAL_FILL });
   put(r, C_ROUTE, "Total", { bold: true, fill: TOTAL_FILL });
   for (let c = C_INDENT0; c <= lastCol; c++) {
-    const v = totals[c] != null ? Number(totals[c].toFixed(1)) : null;
+    const v = totals[c] != null ? Number(totals[c].toFixed(2)) : null;
     put(r, c, v, { bold: true, fill: TOTAL_FILL });
   }
   return r + 2; // next block start (blank gap)
@@ -268,7 +273,13 @@ export async function buildWorkbook(date: Date): Promise<ExcelJS.Workbook> {
       r += 2;
       continue;
     }
-    r = renderBlock(wb, ws, r, title, dateStr, sheet, logoId);
+    // Say so on the sheet itself when a route has not booked: whoever cooks
+    // from a printout should not have to remember which day it was short.
+    const cov = await coverage(date, session);
+    const heading = cov.ready
+      ? title
+      : `${title}  —  PARTIAL: ${cov.booked} of ${cov.total} routes booked`;
+    r = renderBlock(wb, ws, r, heading, dateStr, sheet, logoId);
   }
   return wb;
 }

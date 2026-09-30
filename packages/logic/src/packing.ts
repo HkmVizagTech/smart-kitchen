@@ -48,6 +48,8 @@ export function calcDish(d: DishCalcInput): DishCalcResult {
   return { name: d.name, qty: qtyKg, vesselCount };
 }
 
+// Two decimals, because that is what the kitchen's sheet carries: 135 kg of
+// biryani in 20 kg cans reads 6.75, not 6.8.
 function round1(n: number): number {
-  return Math.round(n * 10) / 10;
+  return Math.round(n * 100) / 100;
 }
