@@ -129,6 +129,10 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
   const [err, setErr] = useState("");
   // The day's menu per meal — what Item 1/2/3 actually are.
   const [menus, setMenus] = useState<Record<string, DayMenu>>({});
+  // A failed menu fetch used to be swallowed, leaving the card on "Loading the
+  // menu…" with no end and nothing to click. The key lands here instead, so the
+  // card can say what went wrong and offer to try again.
+  const [menuErr, setMenuErr] = useState<Record<string, string>>({});
 
   const [tOn, setTOn] = useState(true);
   const [tC, setTC] = useState<SlotCounts>({});
@@ -198,12 +202,22 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
       [ymd(tomorrow()), "DINNER"],
       [ymd(today()), "LUNCH"],
     ];
+    setMenuErr({});
     Promise.all(
-      wanted.map(([d, ses]) => api.menu(d, ses).then((m) => [pkey(d, ses), m] as const).catch(() => null))
+      wanted.map(([d, ses]) =>
+        api.menu(d, ses)
+          .then((m) => [pkey(d, ses), m, null] as const)
+          .catch((e: any) => [pkey(d, ses), null, e?.message || "Could not reach the server."] as const)
+      )
     ).then((rs) => {
       const next: Record<string, DayMenu> = {};
-      for (const r of rs) if (r) next[r[0]] = r[1];
+      const errs: Record<string, string> = {};
+      for (const [key, m, err] of rs) {
+        if (m) next[key] = m;
+        else if (err) errs[key] = err;
+      }
       setMenus((prev) => ({ ...prev, ...next }));
+      setMenuErr(errs);
     });
   }
   useEffect(() => {
@@ -227,6 +241,9 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
   const tMenu = menus[pkey(ymd(tomorrow()), "BREAKFAST")] ?? null;
   const dMenu = menus[pkey(ymd(tomorrow()), "DINNER")] ?? null;
   const lMenu = menus[pkey(ymd(today()), "LUNCH")] ?? null;
+  const tErr = menuErr[pkey(ymd(tomorrow()), "BREAKFAST")] ?? null;
+  const dErr = menuErr[pkey(ymd(tomorrow()), "DINNER")] ?? null;
+  const lErr = menuErr[pkey(ymd(today()), "LUNCH")] ?? null;
 
   async function confirm() {
     setBusy(true); setErr(""); setResult([]);
@@ -277,10 +294,10 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
       <div className="grid2">
         <MealCard title="Morning Tiffin" on={tOn} setOn={setTOn} menu={tMenu} counts={tC} setCounts={setTC} total={tTotal}
           id="tiffin" progress={tProg} unit={tUnit} setUnit={setTUnit} blocked={gate?.BREAKFAST}
-          past={pastFor("BREAKFAST")} />
+          past={pastFor("BREAKFAST")} menuError={tErr} retryMenu={loadMenus} />
         <MealCard title="Dinner" on={dOn} setOn={setDOn} menu={dMenu} counts={dC} setCounts={setDC} total={dTotal}
           id="dinner" progress={dProg} unit={dUnit} setUnit={setDUnit} blocked={gate?.DINNER}
-          past={pastFor("DINNER")} />
+          past={pastFor("DINNER")} menuError={dErr} retryMenu={loadMenus} />
       </div>
 
       <h2>Today (count only)</h2>
@@ -288,7 +305,7 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
         <div className={`meal ${lOn ? "on" : ""}`}>
           <div className="head"><span className="mtitle">Lunch</span><Switch on={lOn} setOn={setLOn} /></div>
           <p className="muted" style={{ margin: "6px 0 0" }}>Same-day · before 11:00 AM · headcount only</p>
-          <LunchMenu menu={lMenu} />
+          <LunchMenu menu={lMenu} error={lErr} retry={loadMenus} />
           <BlockedNote status={gate?.LUNCH} />
           {lOn && <><RoutePicker id="lunch" progress={lProg} value={lUnit} onChange={setLUnit} /><Ppl value={lPpl} set={setLPpl} /></>}
         </div>
@@ -355,8 +372,12 @@ const perPlate = (d: MenuDish) => (d.unit === "NOS" ? `${d.qtyPerPlate} nos` : `
  * route, and the menu for that date decides what they are. So the form names
  * the dishes and asks only "how many plates".
  */
-function MealCard({ title, on, setOn, menu, counts, setCounts, total, id, progress, unit, setUnit, blocked, past }: {
+function MealCard({ title, on, setOn, menu, menuError, retryMenu, counts, setCounts, total, id, progress, unit, setUnit, blocked, past }: {
   title: string; on: boolean; setOn: (b: boolean) => void; menu: DayMenu | null;
+  /** Set when the menu could not be fetched, so the card says so instead of
+   *  claiming to still be loading. */
+  menuError?: string | null;
+  retryMenu?: () => void;
   counts: SlotCounts; setCounts: (c: SlotCounts) => void; total: number;
   id: string; progress?: Progress; unit: string; setUnit: (v: string) => void;
   blocked?: MealStatus;
@@ -383,7 +404,8 @@ function MealCard({ title, on, setOn, menu, counts, setCounts, total, id, progre
       {!on && <p className="muted" style={{ margin: "6px 0 0" }}>Turn on to enter plate counts.</p>}
 
       {on && <RoutePicker id={id} progress={progress} value={unit} onChange={setUnit} />}
-      {on && !menu && <p className="muted" style={{ marginTop: 8 }}>Loading the menu…</p>}
+      {on && !menu && !menuError && <p className="muted" style={{ marginTop: 8 }}>Loading the menu…</p>}
+      {on && !menu && menuError && <MenuFailed message={menuError} retry={retryMenu} />}
       {on && menu && slots.length === 0 && (
         <p className="err" style={{ marginTop: 10, fontSize: 13 }}>
           No menu is set for this day. Ask the kitchen to set one before booking.
@@ -483,13 +505,39 @@ function QuickFill({ past, counts, apply, slots }: {
 }
 
 /** Lunch is a headcount, so its menu is shown rather than ordered. */
-function LunchMenu({ menu }: { menu: DayMenu | null }) {
+function LunchMenu({ menu, error, retry }: {
+  menu: DayMenu | null; error?: string | null; retry?: () => void;
+}) {
+  if (error) return <MenuFailed message={error} retry={retry} />;
   if (!menu || menu.slots.length === 0) return null;
   return (
     <div className="lunch-menu">
       <span className="lm-lab">Today's menu</span>
       <div className="lm-items">
         {menu.slots.map((s) => <span className="lm-item" key={s.dish.id}>{s.dish.name}</span>)}
+      </div>
+    </div>
+  );
+}
+
+/** Shown when the menu could not be fetched at all.
+ *
+ *  This card exists because of a real outage: the menu tables were missing from
+ *  the database, every /menu call returned a 500, and the screen sat on
+ *  "Loading the menu…" indefinitely — no error, no retry, nothing to tell
+ *  anyone whether to wait or call someone. A fetch that fails has to say so. */
+function MenuFailed({ message, retry }: { message: string; retry?: () => void }) {
+  return (
+    <div className="menu-failed">
+      <i className="ti ti-alert-triangle" aria-hidden="true"></i>
+      <div>
+        <b>The menu didn't load.</b>
+        <p>{message}</p>
+        {retry && (
+          <button className="btn ghost sm" style={{ marginTop: 8 }} onClick={retry}>
+            <i className="ti ti-refresh" aria-hidden="true"></i> Try again
+          </button>
+        )}
       </div>
     </div>
   );

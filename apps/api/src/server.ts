@@ -35,6 +35,24 @@ app.addContentTypeParser(
 
 app.get("/health", async () => ({ ok: true, ts: new Date().toISOString() }));
 
+// Unhandled errors are logged in full and answered in one line.
+//
+// Fastify's default reply forwards the thrown error's message, and Prisma's
+// messages name tables and columns: a missing-table error reached the booking
+// screen reading "The table `public.MenuSlot` does not exist in the current
+// database." That is a map of the schema handed to anyone who can sign in, and
+// it tells the person reading it nothing they can act on. The detail stays in
+// the server log, where whoever is fixing it will look.
+app.setErrorHandler((err, req, reply) => {
+  const status = err.statusCode ?? 500;
+  if (status >= 500) {
+    req.log.error({ err }, "unhandled error");
+    return reply.code(500).send({ error: "Something went wrong at our end. It has been logged." });
+  }
+  // 4xx errors are the app's own, deliberate messages — those are meant to be read.
+  return reply.code(status).send({ error: err.message });
+});
+
 await app.register(authRoutes);
 await app.register(orderRoutes);
 await app.register(packingRoutes);

@@ -23,12 +23,22 @@ async function req<T>(path: string, options?: RequestInit): Promise<T> {
     ...options,
   });
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  // Not every failure arrives as JSON: a platform 502, a proxy error page or a
+  // sleeping service all return HTML, and JSON.parse on that threw a
+  // "Unexpected token <" that told the user nothing about what had happened.
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    if (res.ok) throw new Error("The server sent something unreadable. Try again.");
+  }
   if (!res.ok) {
     // 401 means the token expired or was invalidated (e.g. AUTH_SECRET was
     // rotated). Drop it so the app falls back to the sign-in screen instead of
     // showing a wall of errors.
     if (res.status === 401) clearToken();
+    if (res.status >= 500)
+      throw new Error("The server had a problem with this. It has been logged — try again in a moment.");
     throw new Error(data?.error || `Request failed (${res.status})`);
   }
   return data as T;
