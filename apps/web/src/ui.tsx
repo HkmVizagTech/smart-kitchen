@@ -13,6 +13,16 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback, Re
  * switching back to the app, and the interval covers somebody leaving it open
  * on screen. `enabled` keeps it off entirely when there is nothing to wait for.
  */
+/**
+ * "1 order", not "1 orders".
+ *
+ * Counts are shown all over the app and several of them read as a mistake at
+ * exactly one, which is the number a quiet day produces most often.
+ */
+export function plural(n: number, one: string, many = one + "s"): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
 export function useLiveRefresh(fn: () => void, enabled: boolean, everyMs = 15000) {
   // Held in a ref so changing the callback does not restart the timer.
   const latest = useRef(fn);

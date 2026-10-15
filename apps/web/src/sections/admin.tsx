@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, Dish, DishGroup, Unit, User, Vessel, Role, NewUser } from "../api";
 import { ymd, today } from "../util";
-import { Modal, Field, useToast, useLiveRefresh } from "../ui";
+import { Modal, Field, plural, useToast, useLiveRefresh } from "../ui";
 
 function useAsync<T>(fn: () => Promise<T>, deps: any[] = []) {
   const [data, setData] = useState<T | null>(null);
@@ -210,11 +210,11 @@ export function Units() {
     <div>
       <div className="between page-head">
         <div>
-          <h1>Kitchens / units</h1>
-          <p className="muted">The kitchen sections orders are auto-assigned across.</p>
+          <h1>Routes</h1>
+          <p className="muted">Orders are auto-assigned across these delivery routes.</p>
         </div>
         <button className="btn" onClick={() => setAdding(true)}>
-          <i className="ti ti-plus" aria-hidden="true"></i> Add Kitchen
+          <i className="ti ti-plus" aria-hidden="true"></i> Add route
         </button>
       </div>
 
@@ -225,7 +225,7 @@ export function Units() {
               <span className="dish-ic"><i className="ti ti-building-community" aria-hidden="true"></i></span>
               <div>
                 <div className="erow-name">{u.name} {u.isOptional && <span className="pill gray">optional</span>}</div>
-                <div className="erow-sub">Kitchen section</div>
+                <div className="erow-sub">Delivery route</div>
               </div>
             </div>
             <div className="erow-fields">
@@ -255,12 +255,12 @@ function AddUnitModal({ onClose, onSaved }: { onClose: () => void; onSaved: (n: 
     finally { setBusy(false); }
   }
   return (
-    <Modal title="Add kitchen" subtitle="Create a new kitchen section." onClose={onClose} width={420}
+    <Modal title="Add route" subtitle="Create a new delivery route." onClose={onClose} width={420}
       footer={<>
         <button className="btn ghost" onClick={onClose}>Cancel</button>
-        <button className={`btn ${busy ? "loading" : ""}`} disabled={!name.trim() || busy} onClick={add}>Add kitchen</button>
+        <button className={`btn ${busy ? "loading" : ""}`} disabled={!name.trim() || busy} onClick={add}>Add route</button>
       </>}>
-      <Field label="Kitchen name" full><input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Unit-5" /></Field>
+      <Field label="Route name" full><input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Unit-5" /></Field>
       <div style={{ height: 12 }} />
       <Field label="Members (optional)" full><input value={members} onChange={(e) => setMembers(e.target.value.replace(/[^0-9]/g, ""))} placeholder="0" /></Field>
     </Modal>
@@ -585,7 +585,7 @@ export function Dashboard() {
     <div className="stat">
       <div className="l">{label}</div>
       <div className="n">{s.booked}/{s.total}</div>
-      <div className="s">{s.plates} plates · kitchens booked</div>
+      <div className="s">routes booked · {plural(s.plates, "plate")}</div>
       <div className="progress"><div style={{ width: `${s.total ? (s.booked / s.total) * 100 : 0}%` }} /></div>
     </div>
   );
@@ -605,7 +605,7 @@ export function Dashboard() {
         <div className="stat">
           <div className="l">Today · Lunch</div>
           <div className="n">{d.today.lunch.plates}</div>
-          <div className="s">{d.today.lunch.orders} orders</div>
+          <div className="s">{plural(d.today.lunch.orders, "order")}</div>
         </div>
         <div className="stat"><div className="l">Registered users</div><div className="n">{d.usersCount}</div></div>
         <div className="stat"><div className="l">Bookable dishes</div><div className="n">{d.dishesCount}</div></div>
@@ -614,7 +614,7 @@ export function Dashboard() {
         <div className="section-title">Recent activity</div>
         <div className="tablewrap" style={{ marginTop: 8 }}>
           <table>
-            <thead><tr><th>Kitchen</th><th>Meal</th><th>Plates</th><th>Status</th><th>For</th></tr></thead>
+            <thead><tr><th>Route</th><th>Meal</th><th>Plates</th><th>Status</th><th>For</th></tr></thead>
             <tbody>
               {d.recent.map((o) => (
                 <tr key={o.id}>
@@ -635,6 +635,9 @@ export function Dashboard() {
 }
 
 // ---------------- REPORTS ----------------
+/** Leftover share at which the waste figure is worth flagging, not just stating. */
+const WASTE_ALERT_PCT = 10;
+
 export function Reports() {
   const todayStr = ymd(today());
   const weekAgo = (() => { const d = today(); d.setDate(d.getDate() - 7); return ymd(d); })();
@@ -657,14 +660,17 @@ export function Reports() {
           <div className="stats-grid">
             <div className="stat"><div className="l">Verified meals</div><div className="n">{data.meals}</div></div>
             <div className="stat"><div className="l">Plates consumed</div><div className="n">{data.consumed}</div></div>
-            <div className="stat hot"><div className="l">Waste %</div><div className="n">{data.wastePct}%</div><div className="s">{data.leftover} of {data.ordered} plates</div></div>
+            {/* Red only when there is something to be red about. This tile used
+                to be fixed "hot", so a perfect run with nothing left over still
+                reported itself in alarm colours. */}
+            <div className={`stat ${data.wastePct >= WASTE_ALERT_PCT ? "hot" : ""}`}><div className="l">Waste %</div><div className="n">{data.wastePct}%</div><div className="s">{data.leftover} of {data.ordered} plates</div></div>
             <div className="stat"><div className="l">Avg taste / quality</div><div className="n">{data.avgTaste} / {data.avgQuality}</div><div className="s">out of 5</div></div>
           </div>
           <div className="card">
-            <div className="section-title">By kitchen section</div>
+            <div className="section-title">By route</div>
             <div className="tablewrap" style={{ marginTop: 8 }}>
               <table>
-                <thead><tr><th>Section</th><th>Meals</th><th>Ordered</th><th>Consumed</th><th>Leftover</th><th>Waste %</th></tr></thead>
+                <thead><tr><th>Route</th><th>Meals</th><th>Ordered</th><th>Consumed</th><th>Leftover</th><th>Waste %</th></tr></thead>
                 <tbody>
                   {data.perUnit.map((u) => (
                     <tr key={u.unit}>

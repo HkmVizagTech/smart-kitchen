@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { api, Order } from "../api";
-import { useLiveRefresh } from "../ui";
+import { plural, useLiveRefresh } from "../ui";
 
 const SESSIONS: { key: "BREAKFAST" | "LUNCH" | "DINNER"; label: string }[] = [
   { key: "BREAKFAST", label: "Morning Tiffin" },
@@ -162,7 +162,7 @@ export function KitchenOrders({ date }: { date: string }) {
             <div className="section-title">
               {label}{" "}
               <span className="pill">
-                {list.length} {list.length === 1 ? "section" : "sections"} · {totalPlates} plates
+                {plural(list.length, "route")} · {plural(totalPlates, "plate")}
               </span>
             </div>
             <BulkBar

@@ -40,6 +40,37 @@ export function localTime(now: Date = new Date()): { hour: number; minute: numbe
   return { hour: Number(h), minute: Number(m) };
 }
 
+/**
+ * Turn a `?date=` query value into the Date the rest of the code expects.
+ *
+ * Every screen sends a well-formed date, so this used to be a bare
+ * `new Date(req.query.date)`. Anything else — a missing parameter, a cleared
+ * date field, an old bookmark, "2026-13-45" — produced an Invalid Date that
+ * threw several lines later on `.toISOString()`, and the person was told
+ * "something went wrong at our end" about a date they had typed themselves.
+ *
+ * Throws a 400 that says what is wrong, which the error handler passes through
+ * verbatim because it is a deliberate 4xx.
+ */
+export function requireYmd(value: unknown, field = "date"): Date {
+  const s = typeof value === "string" ? value.trim() : "";
+  if (!s) {
+    const err = new Error(`A ${field} is required.`) as Error & { statusCode: number };
+    err.statusCode = 400;
+    throw err;
+  }
+  // Accept exactly "YYYY-MM-DD", then confirm the calendar agrees: this is what
+  // rejects 2026-13-45 and 2026-02-31, which Date would silently roll over.
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.slice(0, 10));
+  const d = m ? new Date(`${s.slice(0, 10)}T00:00:00.000Z`) : new Date(NaN);
+  if (!m || Number.isNaN(d.getTime()) || storedYmd(d) !== s.slice(0, 10)) {
+    const err = new Error(`"${s}" is not a valid ${field}. Use YYYY-MM-DD.`) as Error & { statusCode: number };
+    err.statusCode = 400;
+    throw err;
+  }
+  return d;
+}
+
 /** The UTC calendar date of a stored Date, as "YYYY-MM-DD". */
 export function storedYmd(d: Date): string {
   return d.toISOString().slice(0, 10);

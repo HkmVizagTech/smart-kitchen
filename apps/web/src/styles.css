@@ -249,7 +249,10 @@ h2 { font-size: 16px; margin: 22px 0 12px; letter-spacing: -.2px; font-weight: 7
 .card.hover:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
 .card.soft { background: var(--primary-soft); border-color: var(--surface); }
 .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-.between { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+/* Wraps rather than overflows. Without this the packing-sheet toolbar
+   (Morning/Evening, Delivery notes, Download sheet) pushed ~56px past the
+   right edge on a phone and made the whole page scroll sideways. */
+.between { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
 .spacer { flex: 1; }
 
@@ -754,7 +757,9 @@ tr.totalrow td { border-top: 2px solid var(--border-2); }
 .bulk-lead, .bulk-ask { font-size: 13px; color: var(--text-2); font-weight: 700; }
 .bulk-ask { color: var(--warn); }
 .bulk-ask b { color: var(--text); }
-.bulk-actions { display: flex; gap: 8px; flex-shrink: 0; }
+/* Same reason as .between: three "move all to" buttons do not fit a phone on
+   one line, and a row that cannot wrap takes the page sideways with it. */
+.bulk-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .bulk-n {
   display: inline-block; margin-left: 5px; padding: 0 6px; border-radius: 999px;
   background: var(--primary-soft); color: var(--primary-dark); font-size: 11px; font-weight: 800;

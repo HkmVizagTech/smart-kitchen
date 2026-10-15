@@ -87,7 +87,7 @@ export default function Packing({ date }: { date: string }) {
             <thead>
               <tr>
                 <th rowSpan={2}>S.No</th>
-                <th rowSpan={2}>Section</th>
+                <th rowSpan={2}>Route</th>
                 {sheet.indentDishes.length > 0 && (
                   <th colSpan={sheet.indentDishes.length} className="grp">Indent (plates)</th>
                 )}

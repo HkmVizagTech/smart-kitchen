@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { computeSession, buildWorkbook, coverage, deliveryNotes, type DeliveryNote } from "../packingService.js";
 import { requireRole } from "../guard.js";
+import { requireYmd } from "../time.js";
 
 export default async function packingRoutes(app: FastifyInstance) {
   // Kitchen and Super Admin only — this is the day's full production plan.
@@ -11,12 +12,13 @@ export default async function packingRoutes(app: FastifyInstance) {
     "/packing/preview",
     kitchenOnly,
     async (req) => {
-      const { date, session } = req.query;
+      const { session } = req.query;
+      const date = requireYmd(req.query.date);
       // Always return what has been booked so far. The kitchen watches this
       // screen fill up during the evening; hiding it until the last route books
       // meant staring at a placeholder with no idea who was missing.
-      const cov = await coverage(new Date(date), session);
-      const sheet = await computeSession(new Date(date), session);
+      const cov = await coverage(date, session);
+      const sheet = await computeSession(date, session);
       return { ready: cov.ready, booked: cov.booked, total: cov.total, missing: cov.missing, sheet };
     }
   );
@@ -29,7 +31,7 @@ export default async function packingRoutes(app: FastifyInstance) {
     "/packing/excel",
     kitchenOnly,
     async (req, reply) => {
-      const date = new Date(req.query.date);
+      const date = requireYmd(req.query.date);
       const bf = await coverage(date, "BREAKFAST");
       const dn = await coverage(date, "DINNER");
       // The kitchen can pull the sheet early — a route that has not booked by
@@ -62,7 +64,7 @@ export default async function packingRoutes(app: FastifyInstance) {
     "/packing/delivery-notes",
     kitchenOnly,
     async (req, reply) => {
-      const date = new Date(req.query.date);
+      const date = requireYmd(req.query.date);
       const sessions: ("BREAKFAST" | "DINNER")[] =
         req.query.session === "BREAKFAST" || req.query.session === "DINNER"
           ? [req.query.session]

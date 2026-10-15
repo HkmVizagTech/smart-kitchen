@@ -39,10 +39,10 @@ export class SectionErrorBoundary extends Component<Props, State> {
     if (!this.state.error) return this.props.children;
     return (
       <div className="card">
-        <div className="section-title">This section didn’t load</div>
+        <div className="section-title">This page didn’t load</div>
         <p className="muted" style={{ marginTop: 6 }}>
-          Something went wrong displaying this page. The rest of the app still works — pick another
-          section from the menu, or reload to try again.
+          Something went wrong displaying this page. The rest of the app still works — pick
+          another page from the menu, or reload to try again.
         </p>
         <p className="muted" style={{ marginTop: 6, fontSize: 12 }}>{this.state.error.message}</p>
         <button className="btn sm" style={{ marginTop: 12 }} onClick={() => window.location.reload()}>

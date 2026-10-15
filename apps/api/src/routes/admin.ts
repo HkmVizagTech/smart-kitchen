@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { prisma } from "@sk/db";
 import { requireRole } from "../guard.js";
-import { addDays, dayRange, localYmd } from "../time.js";
+import { addDays, dayRange, localYmd, requireYmd, storedYmd } from "../time.js";
 
 const ROLES = ["BOOKING", "KITCHEN_ADMIN", "VERIFICATION_ADMIN", "SUPER_ADMIN"];
 const publicUser = (u: any) => ({
@@ -17,6 +17,18 @@ const norm = (s?: string | null) => (s ? s.trim() : null);
 // accidentally ship unprotected.
 export default async function adminRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireRole("SUPER_ADMIN"));
+
+  /**
+   * A name the person will have to read on a packing sheet later.
+   *
+   * Blank and whitespace-only names were accepted, which produced rows nobody
+   * could identify and a delivery note headed by nothing at all.
+   */
+  const cleanName = (v: unknown): string | null => {
+    const n = typeof v === "string" ? v.trim().replace(/\s+/g, " ") : "";
+    return n.length >= 1 && n.length <= 80 ? n : null;
+  };
+  const BAD_NAME = { error: "Give it a name (1 to 80 characters)." };
 
   // ---- DISHES (edit quantities + packing factors) ----
   app.get("/admin/dishes", async () => prisma.dish.findMany({ orderBy: { id: "asc" } }));
@@ -55,10 +67,12 @@ export default async function adminRoutes(app: FastifyInstance) {
   app.post<{
     Body: { name: string; group: "ITEM1" | "ITEM2" | "ITEM3"; qtyPerPlate?: number; unit?: "NOS" | "G"; packingFactor?: number; packingVesselKg?: number | null };
   }>("/admin/dishes", async (req, reply) => {
+    const name = cleanName(req.body.name);
+    if (!name) return reply.code(422).send(BAD_NAME);
     try {
       return await prisma.dish.create({
         data: {
-          name: req.body.name,
+          name,
           group: req.body.group,
           qtyPerPlate: req.body.qtyPerPlate ?? 0,
           unit: req.body.unit ?? "G",
@@ -76,23 +90,34 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   app.post<{ Body: { name: string; memberCount?: number; isOptional?: boolean } }>(
     "/admin/units",
-    async (req) =>
-      prisma.unit.create({
+    async (req, reply) => {
+      const name = cleanName(req.body.name);
+      if (!name) return reply.code(422).send(BAD_NAME);
+      return prisma.unit.create({
         data: {
-          name: req.body.name,
+          name,
           memberCount: req.body.memberCount ?? 0,
           isOptional: req.body.isOptional ?? false,
         },
-      })
+      });
+    }
   );
 
   app.put<{ Params: { id: string }; Body: { name?: string; memberCount?: number; isOptional?: boolean } }>(
     "/admin/units/:id",
-    async (req) =>
-      prisma.unit.update({
-        where: { id: Number(req.params.id) },
-        data: req.body,
-      })
+    async (req, reply) => {
+      // Only the fields actually sent are written: passing req.body straight
+      // through let an unknown key reach Prisma and a blank name reach a sheet.
+      const data: { name?: string; memberCount?: number; isOptional?: boolean } = {};
+      if (req.body.name !== undefined) {
+        const name = cleanName(req.body.name);
+        if (!name) return reply.code(422).send(BAD_NAME);
+        data.name = name;
+      }
+      if (typeof req.body.memberCount === "number") data.memberCount = req.body.memberCount;
+      if (typeof req.body.isOptional === "boolean") data.isOptional = req.body.isOptional;
+      return prisma.unit.update({ where: { id: Number(req.params.id) }, data });
+    }
   );
 
   // ---- USERS (profiles + roles + lifecycle) ----
@@ -285,8 +310,8 @@ export default async function adminRoutes(app: FastifyInstance) {
   // ---- REPORTS (verified consumption over a date range) ----
   app.get<{ Querystring: { from: string; to: string } }>("/admin/report", async (req) => {
     // Inclusive of both endpoints, in stored (UTC) day terms.
-    const from = dayRange(req.query.from).gte;
-    const to = dayRange(addDays(req.query.to, 1)).gte;
+    const from = dayRange(requireYmd(req.query.from, "start date")).gte;
+    const to = dayRange(addDays(storedYmd(requireYmd(req.query.to, "end date")), 1)).gte;
     const cons = await prisma.consumption.findMany({
       where: { status: "VERIFIED", order: { date: { gte: from, lt: to } } },
       include: { order: { include: { unit: true, feedback: true } } },

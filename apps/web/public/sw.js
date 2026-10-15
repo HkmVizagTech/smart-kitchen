@@ -1,5 +1,9 @@
-const CACHE = 'sk-shell-v2';
-const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
+const CACHE = 'sk-shell-v3';
+const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png',
+  // Icons used to come from a public CDN, so on a network that could not reach
+  // it every icon in the app vanished. They are ours now, and cached with the
+  // rest of the shell so they survive a bad connection too.
+  '/icons.css', '/fonts/tabler-icons.woff2'];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).catch(() => {}));
   self.skipWaiting();

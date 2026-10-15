@@ -17,7 +17,7 @@
 import type { FastifyInstance } from "fastify";
 import { prisma } from "@sk/db";
 import { requireRole } from "../guard.js";
-import { dayRange } from "../time.js";
+import { dayRange, requireYmd } from "../time.js";
 import { menuFor } from "../menu.js";
 
 const DAYS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"] as const;
@@ -87,7 +87,7 @@ export default async function menuAdminRoutes(app: FastifyInstance) {
   app.get<{ Querystring: { date: string; session: string } }>(
     "/menu-admin/day",
     async (req) => {
-      const date = new Date(req.query.date);
+      const date = requireYmd(req.query.date);
       const session = req.query.session as any;
       const pinned = await prisma.menuSlot.count({
         where: { session, date: dayRange(date) },
@@ -163,7 +163,7 @@ export default async function menuAdminRoutes(app: FastifyInstance) {
   app.delete<{ Querystring: { date: string; session: string } }>(
     "/menu-admin/day",
     async (req) => {
-      const when = new Date(req.query.date);
+      const when = requireYmd(req.query.date);
       const res = await prisma.menuSlot.deleteMany({
         where: { session: req.query.session as any, date: dayRange(when) },
       });

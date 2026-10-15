@@ -3,8 +3,12 @@ import { prisma } from "@sk/db";
 import { canPlaceOrder, DEFAULT_LUNCH_DEADLINE, type Session as Sess } from "@sk/logic";
 import { notifyRoles, notifyUsers } from "../notify.js";
 import { must, requireAuth, requireRole } from "../guard.js";
-import { dayRange } from "../time.js";
+import { dayRange, requireYmd } from "../time.js";
 import { expandSlots, menuFor } from "../menu.js";
+
+/** The only meals there are. Anything else in a request body is a typo or a
+    hand-rolled call, and reaches Prisma as an unknown enum value if not caught. */
+const SESSIONS: Sess[] = ["BREAKFAST", "LUNCH", "DINNER"];
 
 const SES_LABEL: Record<string, string> = { BREAKFAST: "Tiffin", LUNCH: "Lunch", DINNER: "Dinner" };
 
@@ -31,7 +35,7 @@ export default async function orderRoutes(app: FastifyInstance) {
     "/menu",
     { preHandler: requireAuth },
     async (req) => {
-      const slots = await menuFor(new Date(req.query.date), req.query.session);
+      const slots = await menuFor(requireYmd(req.query.date), req.query.session);
       return {
         date: req.query.date,
         session: req.query.session,
@@ -176,7 +180,9 @@ export default async function orderRoutes(app: FastifyInstance) {
     if (onBehalf && !b.unitId)
       return reply.code(422).send({ error: "Choose which route you are booking for." });
 
-    const forDate = new Date(b.date);
+    const forDate = requireYmd(b.date, "booking date");
+    if (!SESSIONS.includes(b.session))
+      return reply.code(422).send({ error: "Choose breakfast, lunch or dinner." });
     const check = canPlaceOrder(b.session, new Date(), forDate, b.isEmergency, await lunchDeadline());
     if (!check.allowed) return reply.code(422).send({ error: check.reason });
 
@@ -334,7 +340,7 @@ export default async function orderRoutes(app: FastifyInstance) {
       return { ...order, assignedUnit: chosenUnit.name, booked: after.booked, total: after.total };
     } catch (e: any) {
       if (e.code === "P2002")
-        return reply.code(409).send({ error: "That kitchen is already booked for this session." });
+        return reply.code(409).send({ error: "That route is already booked for this session." });
       throw e;
     }
   });
@@ -460,7 +466,7 @@ export default async function orderRoutes(app: FastifyInstance) {
   app.get<{ Querystring: { date: string; session: string } }>(
     "/booking/progress",
     { preHandler: requireAuth },
-    async (req) => coverage(new Date(req.query.date), req.query.session)
+    async (req) => coverage(requireYmd(req.query.date), req.query.session)
   );
 
   // Recent orders across all kitchens.
@@ -715,7 +721,8 @@ export default async function orderRoutes(app: FastifyInstance) {
     "/orders",
     { preHandler: requireAuth },
     async (req) => {
-    const { date, session } = req.query;
+    const { session } = req.query;
+    const date = requireYmd(req.query.date);
     return prisma.order.findMany({
       where: {
         date: dayRange(date),
@@ -974,7 +981,7 @@ export default async function orderRoutes(app: FastifyInstance) {
       const target = req.body.status;
       const ti = ORDER_FLOW.indexOf(target);
       if (ti <= 0) return reply.code(422).send({ error: "Invalid status." });
-      const day = new Date(req.body.date);
+      const day = requireYmd(req.body.date);
       const next = new Date(day);
       next.setDate(next.getDate() + 1);
       const earlier = ORDER_FLOW.slice(0, ti); // only orders before the target move up

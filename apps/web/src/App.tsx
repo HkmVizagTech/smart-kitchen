@@ -174,7 +174,7 @@ export default function App() {
             ) : null}
 
             <SectionErrorBoundary resetKey={section}>
-              {Current ? <Current {...sectionProps} /> : <p className="muted">Pick a section.</p>}
+              {Current ? <Current {...sectionProps} /> : <p className="muted">Pick a page from the menu.</p>}
             </SectionErrorBoundary>
           </main>
         </div>

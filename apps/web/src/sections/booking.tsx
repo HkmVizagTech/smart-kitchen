@@ -279,7 +279,7 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
     }
     const out: string[] = [];
     for (const j of jobs) {
-      try { const r = await api.placeOrder(j.body); out.push(`✓ ${j.label} → ${r.assignedUnit} (${r.booked}/${r.total} kitchens booked)`); }
+      try { const r = await api.placeOrder(j.body); out.push(`✓ ${j.label} → ${r.assignedUnit} (${r.booked}/${r.total} routes booked)`); }
       catch (e: any) { out.push(`✗ ${j.label}: ${e.message}`); }
     }
     setResult(out); setBusy(false); loadProgress(); loadGate(); loadPast();

@@ -1,0 +1,74 @@
+/* Tabler Icons 3.11.0 — https://tabler.io — MIT licensed.
+   Subset to the 55 icons this app actually uses and served from our own
+   origin. It used to load from a public CDN, which meant every icon in the
+   app disappeared on any network that could not reach that CDN — and the
+   kitchen and delivery screens lean on icons to be readable at a glance. */
+@font-face{
+  font-family:"tabler-icons";
+  font-style:normal;
+  font-weight:400;
+  font-display:block;
+  src:url("/fonts/tabler-icons.woff2") format("woff2");
+}
+.ti{
+  font-family:"tabler-icons"!important;
+  speak:none;font-style:normal;font-weight:400;font-variant:normal;
+  text-transform:none;line-height:1;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+  display:inline-block;
+}
+.ti-alert-circle:before{content:"\ea05"}
+.ti-alert-triangle:before{content:"\ea06"}
+.ti-archive:before{content:"\ea0b"}
+.ti-arrow-back-up:before{content:"\eb77"}
+.ti-bell:before{content:"\ea35"}
+.ti-book:before{content:"\ea39"}
+.ti-bowl:before{content:"\f4fa"}
+.ti-bowl-spoon:before{content:"\fd91"}
+.ti-building-community:before{content:"\ebf6"}
+.ti-camera:before{content:"\ea54"}
+.ti-chart-bar:before{content:"\ea59"}
+.ti-check:before{content:"\ea5e"}
+.ti-checks:before{content:"\ebaa"}
+.ti-checkup-list:before{content:"\ef5a"}
+.ti-circle-check:before{content:"\ea67"}
+.ti-clipboard-list:before{content:"\ea6d"}
+.ti-clipboard-off:before{content:"\f0ce"}
+.ti-clipboard-plus:before{content:"\efb2"}
+.ti-clock:before{content:"\ea70"}
+.ti-device-floppy:before{content:"\eb62"}
+.ti-device-mobile-down:before{content:"\f8b3"}
+.ti-download:before{content:"\ea96"}
+.ti-edit:before{content:"\ea98"}
+.ti-file-spreadsheet:before{content:"\f03e"}
+.ti-info-circle:before{content:"\eac5"}
+.ti-key:before{content:"\eac7"}
+.ti-layout-dashboard:before{content:"\f02c"}
+.ti-lock:before{content:"\eae2"}
+.ti-logout:before{content:"\eba8"}
+.ti-menu-2:before{content:"\ec42"}
+.ti-moon:before{content:"\eaf8"}
+.ti-pencil:before{content:"\eb04"}
+.ti-plus:before{content:"\eb0b"}
+.ti-printer:before{content:"\eb0e"}
+.ti-receipt:before{content:"\edfd"}
+.ti-refresh:before{content:"\eb13"}
+.ti-restore:before{content:"\fafd"}
+.ti-rotate:before{content:"\eb16"}
+.ti-search:before{content:"\eb1c"}
+.ti-settings:before{content:"\eb20"}
+.ti-share:before{content:"\eb21"}
+.ti-soup:before{content:"\ef2e"}
+.ti-star:before{content:"\eb2e"}
+.ti-star-filled:before{content:"\f6a6"}
+.ti-sun:before{content:"\eb30"}
+.ti-tools-kitchen-2:before{content:"\eeff"}
+.ti-trash:before{content:"\eb41"}
+.ti-truck-delivery:before{content:"\ec4b"}
+.ti-urgent:before{content:"\eb48"}
+.ti-user-check:before{content:"\eb49"}
+.ti-user-off:before{content:"\ecf9"}
+.ti-user-plus:before{content:"\eb4b"}
+.ti-user-shield:before{content:"\f7d0"}
+.ti-users:before{content:"\ebf2"}
+.ti-x:before{content:"\eb55"}
