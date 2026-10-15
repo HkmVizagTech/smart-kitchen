@@ -434,6 +434,10 @@ tbody tr:hover { background: var(--primary-soft); }
 .step-l {
   font-size: 12px; font-weight: 700; color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* The connectors are elastic and the words are not: without this the line
+     between two steps kept its length and the label gave up a letter or two
+     instead, so the step you were on read "Feedba…" on a phone. */
+  flex-shrink: 0;
 }
 .step.now .step-n { background: var(--primary); color: #fff; border-color: var(--primary); }
 .step.now .step-l { color: var(--ink); }
@@ -912,11 +916,16 @@ tr.totalrow td { border-top: 2px solid var(--border-2); }
 .install-text span { color: var(--text-2); font-size: 12.5px; }
 .install-actions { display: flex; gap: 8px; flex-shrink: 0; }
 
-/* numbered steps inside a modal */
-.steps { margin: 0; padding-left: 20px; }
-.steps li { margin-bottom: 12px; line-height: 1.55; font-size: 14px; }
-.steps li::marker { color: var(--primary); font-weight: 800; }
-.steps i { color: var(--primary); }
+/* Numbered "how to install" steps inside a modal.
+   Named apart from the close-out progress strip, which is also an <ol> and was
+   also called .steps: these rules came later in the file, so they were winning
+   — indenting that strip by 20px and enlarging its text until the label of the
+   step you were on ("Verification") no longer fit and truncated to a
+   half-word. */
+.howto-steps { margin: 0; padding-left: 20px; }
+.howto-steps li { margin-bottom: 12px; line-height: 1.55; font-size: 14px; }
+.howto-steps li::marker { color: var(--primary); font-weight: 800; }
+.howto-steps i { color: var(--primary); }
 
 @media (max-width: 520px) {
   .install-actions { width: 100%; }
@@ -978,3 +987,19 @@ tr.totalrow td { border-top: 2px solid var(--border-2); }
 .onbehalf > i { color: var(--primary-dark); font-size: 20px; flex-shrink: 0; margin-top: 1px; }
 .onbehalf b { font-size: 14px; color: var(--ink); }
 .onbehalf p { margin: 4px 0 0; font-size: 13px; color: var(--text-2); line-height: 1.5; }
+
+/* "Checking" on a screen that is waiting for somebody else to act. The pulse
+   is the point: without it a screen that polls looks identical to one that has
+   frozen, which is what sent people to reload the app. */
+.watching {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 11px; font-weight: 800; letter-spacing: .8px; text-transform: uppercase;
+  color: var(--primary-dark); background: #fff;
+  border: 1px solid var(--border-2); border-radius: 999px; padding: 4px 11px;
+}
+.watching .dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--primary);
+  animation: watch-pulse 1.6s ease-in-out infinite;
+}
+@keyframes watch-pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .watching .dot { animation: none; opacity: .9; } }

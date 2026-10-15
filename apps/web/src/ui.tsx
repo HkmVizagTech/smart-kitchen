@@ -1,4 +1,38 @@
-import { createContext, useContext, useState, useCallback, ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, useCallback, ReactNode } from "react";
+
+/**
+ * Re-run something when the person comes back to the app, and on a timer.
+ *
+ * These screens are watched while somebody else acts: a booker waiting on
+ * verification sits on a page whose state is changed on another person's
+ * device. Loading once and never looking again left them staring at "with the
+ * verification team" long after it had been approved — on a phone, where the
+ * app had simply been in the background, that reads as broken.
+ *
+ * Both triggers matter: the focus/visibility one catches the common case of
+ * switching back to the app, and the interval covers somebody leaving it open
+ * on screen. `enabled` keeps it off entirely when there is nothing to wait for.
+ */
+export function useLiveRefresh(fn: () => void, enabled: boolean, everyMs = 15000) {
+  // Held in a ref so changing the callback does not restart the timer.
+  const latest = useRef(fn);
+  latest.current = fn;
+
+  useEffect(() => {
+    if (!enabled) return;
+    const run = () => latest.current();
+    const onVisible = () => { if (!document.hidden) run(); };
+
+    const timer = window.setInterval(run, everyMs);
+    window.addEventListener("focus", run);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", run);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [enabled, everyMs]);
+}
 
 /* ---------------- Modal ---------------- */
 export function Modal({

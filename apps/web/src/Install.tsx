@@ -92,7 +92,7 @@ export default function InstallBanner() {
               </button>
             </div>
             <div className="modal-body">
-              <ol className="steps">
+              <ol className="howto-steps">
                 <li>Tap the <b>Share</b> button at the bottom of Safari <i className="ti ti-share" aria-hidden="true"></i></li>
                 <li>Scroll down and choose <b>Add to Home Screen</b></li>
                 <li>Tap <b>Add</b> — the icon appears with your other apps</li>

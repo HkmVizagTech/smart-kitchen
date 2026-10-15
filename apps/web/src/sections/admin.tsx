@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, Dish, DishGroup, Unit, User, Vessel, Role, NewUser } from "../api";
 import { ymd, today } from "../util";
-import { Modal, Field, useToast } from "../ui";
+import { Modal, Field, useToast, useLiveRefresh } from "../ui";
 
 function useAsync<T>(fn: () => Promise<T>, deps: any[] = []) {
   const [data, setData] = useState<T | null>(null);
@@ -517,6 +517,9 @@ function EmergencyQueue() {
 
   const load = () => api.pendingEmergencies().then(setRows).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, []);
+  // A route raising an emergency is waiting on this decision, often the same
+  // morning. Held while a decline reason is being typed.
+  useLiveRefresh(() => { if (declining === null) load(); }, true);
 
   async function decide(id: number, approve: boolean, why?: string) {
     setBusy(true); setErr("");

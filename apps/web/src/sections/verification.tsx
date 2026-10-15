@@ -6,6 +6,7 @@
 // saying what.
 
 import { useEffect, useState } from "react";
+import { useLiveRefresh } from "../ui";
 import { api, Done, Pending } from "../api";
 
 const SES: Record<string, string> = { BREAKFAST: "Tiffin", LUNCH: "Lunch", DINNER: "Dinner" };
@@ -90,6 +91,9 @@ export function Verify() {
   useEffect(() => {
     load();
   }, []);
+  // Close-outs arrive from bookers while this screen sits open, and the
+  // verifier has no other way to know one has landed.
+  useLiveRefresh(() => { if (returning === null) load(); }, true);
 
   // Who verified is taken from the signed-in session on the server — it is no
   // longer passed from the client.

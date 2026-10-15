@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api, AuthedUser, Booking, BookingStatus, DayMenu, MealStatus, MenuDish, MenuSlot,
   Progress, SlotCounts,
 } from "../api";
+import { useLiveRefresh } from "../ui";
 
 const today = () => new Date();
 const tomorrow = () => { const d = new Date(); d.setDate(d.getDate() + 1); return d; };
@@ -841,36 +842,80 @@ export function CloseOut({ preset, onDone }: { user: AuthedUser; preset: Booking
   const [ok, setOk] = useState("");
   // Set when this close-out was returned by verification, with their reason.
   const [sentBack, setSentBack] = useState<string | null>(null);
+  // The stage as last applied. A background refresh needs to compare against
+  // it, and reading the state variable inside the fetch would see whatever it
+  // was when that callback was made.
+  const stageRef = useRef<Stage>("CONSUMPTION");
+  const setStageTracked = (s: Stage) => { stageRef.current = s; setStage(s); };
 
   function refreshList() {
     api.recentBookings().then((bs) => setList(bs.filter((b) => b.needsCloseOut && b.status !== "CLOSED")));
   }
   useEffect(() => { refreshList(); }, []);
 
-  // Load the main items whenever a booking is chosen, restoring whatever was
-  // submitted last time so a correction starts from the previous numbers
-  // rather than from blank.
-  useEffect(() => {
-    if (!booking) { setLines([]); setSentBack(null); setStage("CONSUMPTION"); return; }
-    setLoadingItems(true);
-    setErr(""); setOk("");
-    api.closeoutItems(booking.id)
-      .then((r) => {
+  /**
+   * Fetch this meal's close-out state.
+   *
+   * `fresh` is the first load after choosing a meal: it fills the form from
+   * whatever was submitted before, so a correction starts from the previous
+   * numbers rather than from blank. A later refresh passes false and touches
+   * only what an outside actor can change — the stage and any rejection —
+   * because the person may be part-way through typing figures or picking
+   * stars, and overwriting that under their hands is worse than being stale.
+   */
+  const loadCloseout = useCallback(async (id: number, fresh: boolean) => {
+    if (fresh) { setLoadingItems(true); setErr(""); setOk(""); }
+    try {
+      const r = await api.closeoutItems(id);
+      // A background refresh can move the stage on because someone else acted.
+      // When it does, the message still on screen describes the step that has
+      // just ended ("Sent to the verification team...") and now reads as if
+      // nothing happened, so it is replaced rather than left to contradict the
+      // step underneath it.
+      const moved = !fresh && stageRef.current !== r.stage;
+      setStageTracked(r.stage);
+      if (moved) {
+        setErr("");
+        setOk(
+          r.stage === "FEEDBACK"
+            ? "Verified. One last step \u2014 tell us how the food was."
+            : ""
+        );
+      }
+      setSentBack(
+        r.previous?.status === "REJECTED"
+          ? r.previous.rejectionReason || "no reason given"
+          : null
+      );
+      if (fresh) {
         setLines(r.items.map((it) => ({ ...it, consumed: it.consumed == null ? "" : String(it.consumed) })));
-        setStage(r.stage);
-        if (r.previous) {
-          setNotes(r.previous.notes ?? "");
-          setTaste(r.previous.taste ?? 0);
-          setQuality(r.previous.quality ?? 0);
-          setRemarks(r.previous.remarks ?? "");
-          setSentBack(r.previous.status === "REJECTED" ? (r.previous.rejectionReason || "no reason given") : null);
-        } else {
-          setNotes(""); setTaste(0); setQuality(0); setRemarks(""); setSentBack(null);
-        }
-      })
-      .catch((e) => setErr(e.message))
-      .finally(() => setLoadingItems(false));
-  }, [booking?.id]);
+        setNotes(r.previous?.notes ?? "");
+        setTaste(r.previous?.taste ?? 0);
+        setQuality(r.previous?.quality ?? 0);
+        setRemarks(r.previous?.remarks ?? "");
+      }
+    } catch (e: any) {
+      if (fresh) setErr(e.message);
+      // A failed background refresh is not worth an error message: the screen
+      // is still showing the last good answer, and the next tick will retry.
+    } finally {
+      if (fresh) setLoadingItems(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!booking) { setLines([]); setSentBack(null); setStageTracked("CONSUMPTION"); return; }
+    loadCloseout(booking.id, true);
+  }, [booking?.id, loadCloseout]);
+
+  // Only while waiting on somebody else. In the other stages the screen is
+  // waiting on the person looking at it, so there is nothing to poll for.
+  const waiting = !!booking && stage === "AWAITING_VERIFICATION";
+  useLiveRefresh(() => { if (booking) loadCloseout(booking.id, false); }, waiting);
+
+  // The picker behind this screen goes stale the same way — a meal that became
+  // ready for feedback should say so when the person comes back to the app.
+  useLiveRefresh(() => refreshList(), !booking);
 
   const orderedTotal = lines.reduce((a, l) => a + l.ordered, 0);
   const consumedTotal = lines.reduce((a, l) => a + (Number(l.consumed) || 0), 0);
@@ -895,7 +940,7 @@ export function CloseOut({ preset, onDone }: { user: AuthedUser; preset: Booking
         items: lines.map((l) => ({ dishId: l.dishId, consumed: Number(l.consumed) || 0 })),
         notes,
       });
-      setStage("AWAITING_VERIFICATION");
+      setStageTracked("AWAITING_VERIFICATION");
       setSentBack(null);
       setOk("Sent to the verification team. They will check the numbers, and then the feedback step opens here.");
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
@@ -907,7 +952,7 @@ export function CloseOut({ preset, onDone }: { user: AuthedUser; preset: Booking
     setBusy(true); setErr(""); setOk("");
     try {
       await api.submitFeedback({ orderId: booking.id, taste, quality, remarks });
-      setStage("DONE");
+      setStageTracked("DONE");
       setOk("Thank you \u2014 this meal is closed. You can book this route again now.");
       setTimeout(onDone, 1600);
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
@@ -935,7 +980,7 @@ export function CloseOut({ preset, onDone }: { user: AuthedUser; preset: Booking
                       </div>
                     )}
                     {waiting && <div className="muted" style={{ marginTop: 3 }}>Waiting on verification</div>}
-                    {forFeedback && <div className="muted" style={{ marginTop: 3 }}>Verified \u2014 feedback is open</div>}
+                    {forFeedback && <div className="muted" style={{ marginTop: 3 }}>Verified — feedback is open</div>}
                   </div>
                   <button className={`btn sm ${waiting ? "ghost" : ""}`} onClick={() => setBooking(b)}>
                     {b.consumptionStatus === "REJECTED" ? "Fix" : forFeedback ? "Give feedback" : waiting ? "View" : "Select"}
@@ -962,7 +1007,7 @@ export function CloseOut({ preset, onDone }: { user: AuthedUser; preset: Booking
               <div>
                 <b>Verification sent this back</b>
                 <p>{sentBack}</p>
-                <p className="muted">Your previous figures are filled in below \u2014 change what needs changing and send it again.</p>
+                <p className="muted">Your previous figures are filled in below — change what needs changing and send it again.</p>
               </div>
             </div>
           )}
@@ -975,7 +1020,7 @@ export function CloseOut({ preset, onDone }: { user: AuthedUser; preset: Booking
                   ? "Enter plates consumed \u2014 leftover is worked out for you."
                   : "Submitted. These are the figures the team is checking."}
               </p>
-              {loadingItems && <p className="muted">Loading items\u2026</p>}
+              {loadingItems && <p className="muted">Loading items…</p>}
               {lines.map((l) => {
                 const c = Number(l.consumed) || 0;
                 const left = Math.max(0, l.ordered - c);
@@ -1022,12 +1067,19 @@ export function CloseOut({ preset, onDone }: { user: AuthedUser; preset: Booking
 
           {stage === "AWAITING_VERIFICATION" && (
             <div className="card soft">
-              <div className="section-title">Step 2 · With the verification team</div>
+              <div className="between">
+                <div className="section-title">Step 2 · With the verification team</div>
+                <span className="watching"><span className="dot" />Checking</span>
+              </div>
               <p className="muted" style={{ marginTop: 6 }}>
-                Nothing to do here. Once they approve the figures, the feedback step opens on this
-                screen and you will get a notification. If they send it back, the reason shows here
-                and you can correct the numbers.
+                Nothing to do here. This screen is watching for their decision and will move itself
+                on — you do not need to reload. If they send it back, the reason appears here and
+                you can correct the numbers.
               </p>
+              <button className="btn ghost sm" style={{ marginTop: 10 }}
+                onClick={() => booking && loadCloseout(booking.id, false)}>
+                <i className="ti ti-refresh" aria-hidden="true"></i> Check now
+              </button>
             </div>
           )}
 
