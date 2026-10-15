@@ -716,6 +716,59 @@ export default async function orderRoutes(app: FastifyInstance) {
     }));
   });
 
+  /**
+   * Every emergency order, with what was decided about it.
+   *
+   * The pending queue above is the only place an emergency order surfaced, so
+   * the moment it was approved or declined it vanished into the general order
+   * list as a small mark beside the meal name. "Which emergency meals went out
+   * last week, and who approved them" had no answer short of reading every row.
+   */
+  app.get<{ Querystring: { status?: string; days?: string } }>(
+    "/orders/emergency",
+    { preHandler: requireRole("SUPER_ADMIN") },
+    async (req) => {
+      const days = Math.min(Math.max(Number(req.query.days ?? 60) || 60, 1), 365);
+      const since = new Date(Date.now() - days * 86_400_000);
+      const want = (req.query.status ?? "").toUpperCase();
+      const rows = await prisma.order.findMany({
+        where: {
+          isEmergency: true,
+          date: { gte: since },
+          ...(["PENDING", "APPROVED", "DECLINED"].includes(want)
+            ? { approval: want as "PENDING" | "APPROVED" | "DECLINED" }
+            : {}),
+        },
+        include: {
+          unit: true,
+          bookedBy: { select: { name: true } },
+          approvedBy: { select: { name: true } },
+          consumption: true,
+          feedback: true,
+        },
+        // Undecided first — those are the ones somebody is waiting on — then
+        // most recent.
+        orderBy: [{ approval: "asc" }, { date: "desc" }, { id: "desc" }],
+      });
+      return rows.map((o) => ({
+        id: o.id,
+        unit: o.unit.name,
+        session: o.session,
+        date: o.date,
+        peopleCount: o.peopleCount,
+        totalPlates: o.totalPlates,
+        status: o.status,
+        approval: o.approval,
+        declineReason: o.declineReason,
+        requestedBy: o.bookedBy?.name ?? null,
+        decidedBy: o.approvedBy?.name ?? null,
+        decidedAt: o.approvedAt,
+        consumed: o.consumption?.consumedQty ?? null,
+        rated: o.feedback ? { taste: o.feedback.taste, quality: o.feedback.quality } : null,
+      }));
+    }
+  );
+
   // List orders for a date (+ optional session), with line items.
   app.get<{ Querystring: { date: string; session?: string } }>(
     "/orders",
@@ -1128,4 +1181,82 @@ export default async function orderRoutes(app: FastifyInstance) {
       return { ok: true, amount };
     }
   );
+
+  // ---- FEEDBACK, where the people who cook can read it ----
+  //
+  // Bookers have always been asked how the food was, and the answers have
+  // always been stored. Nothing displayed them: the only trace anywhere in the
+  // app was an average on the admin Reports tile, so a remark like "sambar
+  // arrived cold" went into the database and was never read by anybody. The
+  // kitchen in particular had no view of it at all, which makes asking for it
+  // close to dishonest.
+  //
+  // Kitchen and Super Admin. Verification deliberately does not see it: their
+  // job is the plate counts, and knowing the rating first would colour that.
+  app.get<{ Querystring: { limit?: string; unitId?: string; session?: string } }>(
+    "/feedback/recent",
+    { preHandler: requireRole("KITCHEN_ADMIN") },
+    async (req) => {
+      const take = Math.min(Math.max(Number(req.query.limit ?? 50) || 50, 1), 200);
+      const unitId = Number(req.query.unitId);
+      const rows = await prisma.feedback.findMany({
+        where: {
+          order: {
+            ...(Number.isInteger(unitId) && unitId > 0 ? { unitId } : {}),
+            ...(SESSIONS.includes(req.query.session as Sess) ? { session: req.query.session as Sess } : {}),
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        take,
+        include: {
+          order: {
+            include: {
+              unit: true,
+              bookedBy: true,
+              items: { include: { dish: true } },
+              consumption: true,
+            },
+          },
+        },
+      });
+      return rows.map((f) => ({
+        id: f.id,
+        orderId: f.orderId,
+        at: f.createdAt,
+        taste: f.taste,
+        quality: f.quality,
+        remarks: f.remarks?.trim() || null,
+        date: f.order.date,
+        session: f.order.session,
+        unit: f.order.unit.name,
+        unitId: f.order.unitId,
+        by: f.order.bookedBy?.name ?? null,
+        // What they were eating, so a complaint can be matched to a dish
+        // without opening the order.
+        dishes: f.order.items
+          .filter((it) => !it.dish.accompaniment)
+          .map((it) => ({ name: it.dish.name, plates: it.plates })),
+        ordered: f.order.consumption?.receivedQty ?? f.order.totalPlates ?? 0,
+        consumed: f.order.consumption?.consumedQty ?? null,
+        leftover: f.order.consumption?.leftoverQty ?? null,
+      }));
+    }
+  );
+
+  /** Headline numbers for the feedback screen, over the rows it is showing. */
+  app.get("/feedback/summary", { preHandler: requireRole("KITCHEN_ADMIN") }, async () => {
+    const since = new Date(Date.now() - 30 * 86_400_000);
+    const rows = await prisma.feedback.findMany({ where: { createdAt: { gte: since } } });
+    const n = rows.length;
+    const avg = (pick: (f: { taste: number; quality: number }) => number) =>
+      n ? Math.round((rows.reduce((a, f) => a + pick(f), 0) / n) * 10) / 10 : 0;
+    return {
+      count: n,
+      avgTaste: avg((f) => f.taste),
+      avgQuality: avg((f) => f.quality),
+      // A rating of 1 or 2 on either axis is the kind worth chasing.
+      poor: rows.filter((f) => f.taste <= 2 || f.quality <= 2).length,
+      withRemarks: rows.filter((f) => (f.remarks ?? "").trim().length > 0).length,
+    };
+  });
 }

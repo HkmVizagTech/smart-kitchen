@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { api, Dish, DishGroup, Unit, User, Vessel, Role, NewUser } from "../api";
+import { useCallback, useEffect, useState } from "react";
+import { api, Dish, DishGroup, EmergencyRow, Unit, User, Vessel, Role, NewUser } from "../api";
 import { ymd, today } from "../util";
 import { Modal, Field, plural, useToast, useLiveRefresh } from "../ui";
 
@@ -90,7 +90,10 @@ export function Dishes() {
                   <span className="dish-ic"><i className="ti ti-soup" aria-hidden="true"></i></span>
                   <div>
                     <div className="erow-name">{d.name}</div>
-                    <div className="erow-sub">{d.bookable ? "Shown on booking menu" : "Hidden / auto-derived"}</div>
+                    <div className="erow-sub">
+                      {d.bookable ? "Shown on booking menu" : "Hidden / auto-derived"}
+                      {d.accompaniment ? " \u00b7 accompaniment" : ""}
+                    </div>
                   </div>
                 </div>
                 <div className="erow-fields">
@@ -104,6 +107,17 @@ export function Dishes() {
                     <label>Bookable</label>
                     <label className="switch">
                       <input type="checkbox" defaultChecked={d.bookable} onChange={(e) => saveField(d, { bookable: e.target.checked })} />
+                      <span className="sl"></span>
+                    </label>
+                  </div>
+                  {/* Decides which side of the packing sheet a dish lands on.
+                      It was fixed at creation with no way to change it, so a
+                      side dish like Raita counted as a main item and inflated
+                      the indent plate total. */}
+                  <div className="ef toggle">
+                    <label title="Goes out with a main dish; quantity follows that dish and is left out of the indent plate count.">Accompaniment</label>
+                    <label className="switch">
+                      <input type="checkbox" defaultChecked={d.accompaniment} onChange={(e) => saveField(d, { accompaniment: e.target.checked })} />
                       <span className="sl"></span>
                     </label>
                   </div>
@@ -269,6 +283,12 @@ function AddUnitModal({ onClose, onSaved }: { onClose: () => void; onSaved: (n: 
 
 // ---------------- USERS ----------------
 const ROLES: Role[] = ["BOOKING", "KITCHEN_ADMIN", "VERIFICATION_ADMIN", "SUPER_ADMIN"];
+/** What the API enforces on every password it accepts. Kept here so the form
+    and the server cannot drift apart again. */
+const MIN_PASSWORD = 8;
+
+const SES_LABEL: Record<string, string> = { BREAKFAST: "Tiffin", LUNCH: "Lunch", DINNER: "Dinner" };
+
 const ROLE_LABEL: Record<string, string> = {
   BOOKING: "Booking", KITCHEN_ADMIN: "Kitchen", VERIFICATION_ADMIN: "Verification", SUPER_ADMIN: "Super Admin",
 };
@@ -413,7 +433,9 @@ export function Users() {
 function AddUserModal({ busy, onClose, onSave }: { busy: boolean; onClose: () => void; onSave: (b: NewUser, done: () => void) => void }) {
   const [f, setF] = useState<NewUser>(emptyNew());
   const set = (k: keyof NewUser, v: string) => setF((s) => ({ ...s, [k]: v }));
-  const valid = f.name.trim() && f.username.trim() && f.password.length >= 6 && f.role;
+  // 8 is what the API enforces. The form used to allow 6, so the Create button
+  // was live on a password the server would then refuse.
+  const valid = f.name.trim() && f.username.trim() && f.password.length >= MIN_PASSWORD && f.role;
   return (
     <Modal title="Add user" subtitle="Create an account and share the temporary password." onClose={onClose}
       footer={<>
@@ -429,7 +451,7 @@ function AddUserModal({ busy, onClose, onSave }: { busy: boolean; onClose: () =>
         </Field>
         <Field label="Username"><input value={f.username} onChange={(e) => set("username", e.target.value)} placeholder="login id" /></Field>
         <Field label="Temporary password" full>
-          <input value={f.password} onChange={(e) => set("password", e.target.value)} placeholder="min 6 characters" />
+          <input value={f.password} onChange={(e) => set("password", e.target.value)} placeholder={`min ${MIN_PASSWORD} characters`} />
         </Field>
         <Field label="Phone"><input value={f.phone} onChange={(e) => set("phone", e.target.value)} placeholder="optional" /></Field>
         <Field label="Email"><input value={f.email} onChange={(e) => set("email", e.target.value)} placeholder="optional" /></Field>
@@ -437,7 +459,7 @@ function AddUserModal({ busy, onClose, onSave }: { busy: boolean; onClose: () =>
         <Field label="Centre / org"><input value={f.centre} onChange={(e) => set("centre", e.target.value)} placeholder="optional" /></Field>
         <Field label="Address" full><input value={f.address} onChange={(e) => set("address", e.target.value)} placeholder="optional" /></Field>
       </div>
-      {f.password.length > 0 && f.password.length < 6 && <p className="err" style={{ fontSize: 13 }}>Password must be at least 6 characters.</p>}
+      {f.password.length > 0 && f.password.length < MIN_PASSWORD && <p className="err" style={{ fontSize: 13 }}>Password must be at least {MIN_PASSWORD} characters.</p>}
     </Modal>
   );
 }
@@ -477,9 +499,9 @@ function ResetPasswordModal({ user, busy, onClose, onSave }: { user: User; busy:
     <Modal title="Reset password" subtitle={`Set a new password for ${user.name}`} onClose={onClose} width={420}
       footer={<>
         <button className="btn ghost" onClick={onClose}>Cancel</button>
-        <button className={`btn ${busy ? "loading" : ""}`} disabled={pw.length < 6 || busy} onClick={() => onSave(pw, onClose)}>Update password</button>
+        <button className={`btn ${busy ? "loading" : ""}`} disabled={pw.length < MIN_PASSWORD || busy} onClick={() => onSave(pw, onClose)}>Update password</button>
       </>}>
-      <Field label="New password" full><input value={pw} onChange={(e) => setPw(e.target.value)} placeholder="min 6 characters" /></Field>
+      <Field label="New password" full><input value={pw} onChange={(e) => setPw(e.target.value)} placeholder={`min ${MIN_PASSWORD} characters`} /></Field>
       <p className="muted" style={{ marginTop: 10 }}>Share this with the member. They'll use it to sign in (it won't be shown again).</p>
     </Modal>
   );
@@ -637,6 +659,99 @@ export function Dashboard() {
 // ---------------- REPORTS ----------------
 /** Leftover share at which the waste figure is worth flagging, not just stating. */
 const WASTE_ALERT_PCT = 10;
+
+/**
+ * Every emergency order, and what was decided about it.
+ *
+ * The Dashboard queue only ever showed the ones still awaiting a decision, so
+ * the moment an emergency was approved or declined it disappeared into the
+ * general order list as a small mark beside the meal name. "Which emergency
+ * meals went out last month, and who signed them off" could not be answered
+ * without reading every row of every day.
+ */
+export function Emergencies() {
+  const [rows, setRows] = useState<EmergencyRow[]>([]);
+  const [status, setStatus] = useState<"" | "PENDING" | "APPROVED" | "DECLINED">("");
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async (fresh = false) => {
+    if (fresh) setLoading(true);
+    try { setRows(await api.emergencyOrders(status || undefined)); setErr(""); }
+    catch (e: any) { if (fresh) setErr(e.message); }
+    finally { if (fresh) setLoading(false); }
+  }, [status]);
+
+  useEffect(() => { load(true); }, [load]);
+  useLiveRefresh(() => load(false), true);
+
+  if (loading) return <p className="muted">Loading…</p>;
+  if (err) return <p className="err">{err}</p>;
+
+  const TABS: { key: typeof status; label: string }[] = [
+    { key: "", label: "All" },
+    { key: "PENDING", label: "Awaiting decision" },
+    { key: "APPROVED", label: "Approved" },
+    { key: "DECLINED", label: "Declined" },
+  ];
+  const PILL: Record<string, string> = { PENDING: "amber", APPROVED: "green", DECLINED: "red" };
+
+  return (
+    <div>
+      <h1>Emergency orders</h1>
+      <p className="muted">Extra meals requested outside the normal booking windows, last 60 days.</p>
+
+      <div className="segmented" style={{ marginTop: 14 }}>
+        {TABS.map((t) => (
+          <button key={t.label} className={status === t.key ? "on" : ""} onClick={() => setStatus(t.key)}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {rows.length === 0 && (
+        <p className="muted" style={{ marginTop: 16 }}>
+          No emergency orders here. Pending ones also appear at the top of the Dashboard.
+        </p>
+      )}
+
+      <div className="olist" style={{ marginTop: 14 }}>
+        {rows.map((o) => (
+          <div className="ocard" key={o.id}>
+            <div className="em-row">
+              <div>
+                <div className="ounit">
+                  {o.unit}{" "}
+                  <span className={`pill ${PILL[o.approval ?? "PENDING"] ?? "gray"}`}>
+                    {(o.approval ?? "PENDING").toLowerCase()}
+                  </span>
+                </div>
+                <div className="oplates">
+                  {SES_LABEL[o.session] ?? o.session} · {new Date(o.date).toDateString()} ·{" "}
+                  {plural(o.peopleCount ?? o.totalPlates ?? 0, "person", "people")}
+                </div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div className="oplates">
+                  {o.requestedBy ? <>asked by <b>{o.requestedBy}</b></> : null}
+                </div>
+                <div className="oplates">
+                  {o.decidedBy
+                    ? <>{o.approval === "DECLINED" ? "declined" : "approved"} by <b>{o.decidedBy}</b></>
+                    : "nobody has decided yet"}
+                </div>
+              </div>
+            </div>
+            {o.declineReason && <div className="em-why"><b>Reason:</b> {o.declineReason}</div>}
+            {o.consumed != null && (
+              <div className="oitems">{o.consumed} plates eaten{o.rated ? ` · rated ${o.rated.taste}/${o.rated.quality}` : ""}</div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export function Reports() {
   const todayStr = ymd(today());

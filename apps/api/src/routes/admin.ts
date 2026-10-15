@@ -42,6 +42,9 @@ export default async function adminRoutes(app: FastifyInstance) {
       packingVesselKg?: number | null;
       group?: "ITEM1" | "ITEM2" | "ITEM3";
       bookable?: boolean;
+      /** True = travels with a main dish and is derived from its plate count,
+          so it is kept out of the indent block on the packing sheet. */
+      accompaniment?: boolean;
       ratePerPlate?: number | null;
     };
   }>("/admin/dishes/:id", async (req) => {
@@ -56,6 +59,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         packingVesselKg: b.packingVesselKg,
         group: b.group,
         bookable: b.bookable,
+        accompaniment: b.accompaniment,
         // Null is meaningful here — it means "charge the default rate" — so an
         // explicit null must be written through rather than treated as absent.
         ...(b.ratePerPlate !== undefined ? { ratePerPlate: b.ratePerPlate } : {}),
@@ -65,7 +69,7 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   // Add a new dish.
   app.post<{
-    Body: { name: string; group: "ITEM1" | "ITEM2" | "ITEM3"; qtyPerPlate?: number; unit?: "NOS" | "G"; packingFactor?: number; packingVesselKg?: number | null };
+    Body: { name: string; group: "ITEM1" | "ITEM2" | "ITEM3"; qtyPerPlate?: number; unit?: "NOS" | "G"; packingFactor?: number; packingVesselKg?: number | null; accompaniment?: boolean };
   }>("/admin/dishes", async (req, reply) => {
     const name = cleanName(req.body.name);
     if (!name) return reply.code(422).send(BAD_NAME);
@@ -78,6 +82,7 @@ export default async function adminRoutes(app: FastifyInstance) {
           unit: req.body.unit ?? "G",
           packingFactor: req.body.packingFactor ?? 0,
           packingVesselKg: req.body.packingVesselKg ?? null,
+          accompaniment: req.body.accompaniment ?? false,
         },
       });
     } catch {
@@ -164,6 +169,17 @@ export default async function adminRoutes(app: FastifyInstance) {
     } catch (e: any) {
       if (e.code === "P2002") {
         const f = e.meta?.target?.[0] ?? "username/email/phone";
+        // Removing a user archives the record rather than erasing it, so order
+        // history keeps pointing at a real person. The archived row still holds
+        // the login, which is baffling if the error only says "already in use"
+        // while the Users list shows nobody by that name.
+        const archived = await prisma.user.findFirst({
+          where: { username: b.username.trim().toLowerCase(), deletedAt: { not: null } },
+        });
+        if (archived && f === "username")
+          return reply.code(409).send({
+            error: `A removed account still holds the login "${archived.username}". Restore it from Archived and reset its password, or choose a different login.`,
+          });
         return reply.code(409).send({ error: `That ${f} is already in use.` });
       }
       throw e;

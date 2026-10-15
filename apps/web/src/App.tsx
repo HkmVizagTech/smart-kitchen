@@ -90,6 +90,9 @@ export default function App() {
   const sectionProps: Record<string, unknown> = {
     user: me,
     date,
+    // Lunch is a same-day meal while tiffin and dinner are for tomorrow, so the
+    // packing screen needs to be able to move the shared cooking date itself.
+    setDate,
     preset: closing,
     onBooked: () => go("mine"),
     onCloseOut: (b: Booking) => { setClosing(b); go("close"); },

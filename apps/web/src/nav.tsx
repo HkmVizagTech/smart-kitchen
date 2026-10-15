@@ -14,8 +14,9 @@ import { NewBooking, MyBookings, CloseOut } from "./sections/booking";
 import { KitchenOrders } from "./sections/kitchen";
 import Packing from "./sections/packing";
 import Menu from "./sections/menu";
+import Feedback from "./sections/feedback";
 import { Verify, Payments } from "./sections/verification";
-import { Dashboard, Dishes, Reports, Settings, Units, Users, Vessels } from "./sections/admin";
+import { Dashboard, Dishes, Emergencies, Reports, Settings, Units, Users, Vessels } from "./sections/admin";
 
 /** Every role that can reach a given area. SUPER_ADMIN sees everything. */
 const ALL: Role[] = ["BOOKING", "KITCHEN_ADMIN", "VERIFICATION_ADMIN", "SUPER_ADMIN"];
@@ -43,6 +44,9 @@ export const NAV: NavItem[] = [
   { key: "orders",    label: "Orders",        icon: "ti ti-clipboard-list",      group: "Kitchen",      roles: ["KITCHEN_ADMIN", "SUPER_ADMIN"], needsDate: true, component: KitchenOrders },
   { key: "packing",   label: "Packing Sheet", icon: "ti ti-file-spreadsheet",    group: "Kitchen",      roles: ["KITCHEN_ADMIN", "SUPER_ADMIN"], needsDate: true, component: Packing },
   { key: "menu",      label: "Menu",          icon: "ti ti-book",                group: "Kitchen",      roles: ["KITCHEN_ADMIN", "SUPER_ADMIN"], needsDate: true, component: Menu },
+  // The kitchen is who can act on a complaint about the food, so this sits in
+  // their group rather than under Administration.
+  { key: "feedback",  label: "Feedback",      icon: "ti ti-message-2",           group: "Kitchen",      roles: ["KITCHEN_ADMIN", "SUPER_ADMIN"], component: Feedback },
 
   // --- Verification ---
   { key: "verify",    label: "To verify",     icon: "ti ti-checkup-list",        group: "Verification", roles: ["VERIFICATION_ADMIN", "SUPER_ADMIN"], component: Verify },
@@ -51,6 +55,7 @@ export const NAV: NavItem[] = [
   // --- Administration (Super Admin only) ---
   { key: "dashboard", label: "Dashboard",     icon: "ti ti-layout-dashboard",    group: "Administration", roles: ["SUPER_ADMIN"], component: Dashboard },
   { key: "reports",   label: "Reports",       icon: "ti ti-chart-bar",           group: "Administration", roles: ["SUPER_ADMIN"], component: Reports },
+  { key: "emergency", label: "Emergency",     icon: "ti ti-urgent",              group: "Administration", roles: ["SUPER_ADMIN"], component: Emergencies },
   { key: "dishes",    label: "Dishes",        icon: "ti ti-soup",                group: "Administration", roles: ["SUPER_ADMIN"], component: Dishes },
   { key: "vessels",   label: "Vessels",       icon: "ti ti-bowl",                group: "Administration", roles: ["SUPER_ADMIN"], component: Vessels },
   { key: "units",     label: "Routes",        icon: "ti ti-building-community",  group: "Administration", roles: ["SUPER_ADMIN"], component: Units },

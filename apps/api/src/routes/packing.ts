@@ -8,7 +8,7 @@ export default async function packingRoutes(app: FastifyInstance) {
   const kitchenOnly = { preHandler: requireRole("KITCHEN_ADMIN") };
 
   // JSON breakdown for a date + session. Only "ready" once all kitchens are booked.
-  app.get<{ Querystring: { date: string; session: "BREAKFAST" | "DINNER" } }>(
+  app.get<{ Querystring: { date: string; session: "BREAKFAST" | "LUNCH" | "DINNER" } }>(
     "/packing/preview",
     kitchenOnly,
     async (req) => {
@@ -34,6 +34,8 @@ export default async function packingRoutes(app: FastifyInstance) {
       const date = requireYmd(req.query.date);
       const bf = await coverage(date, "BREAKFAST");
       const dn = await coverage(date, "DINNER");
+      // Lunch is same-day and booked right up to the cutoff, so it is never
+      // used to hold the sheet back — it just appears on it once booked.
       // The kitchen can pull the sheet early — a route that has not booked by
       // cooking time is a real situation, and a sheet missing one row beats no
       // sheet at all. The workbook says so in its header when that happens.
@@ -65,10 +67,10 @@ export default async function packingRoutes(app: FastifyInstance) {
     kitchenOnly,
     async (req, reply) => {
       const date = requireYmd(req.query.date);
-      const sessions: ("BREAKFAST" | "DINNER")[] =
-        req.query.session === "BREAKFAST" || req.query.session === "DINNER"
+      const sessions: ("BREAKFAST" | "LUNCH" | "DINNER")[] =
+        req.query.session === "BREAKFAST" || req.query.session === "LUNCH" || req.query.session === "DINNER"
           ? [req.query.session]
-          : ["BREAKFAST", "DINNER"];
+          : ["BREAKFAST", "LUNCH", "DINNER"];
 
       const blocks: string[] = [];
       for (const session of sessions) {

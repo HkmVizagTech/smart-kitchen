@@ -78,11 +78,49 @@ export interface SignupPayload {
 export type DishGroup = "ITEM1" | "ITEM2" | "ITEM3";
 
 /** A dish as the admin screens edit it — includes the packing configuration. */
+export interface FeedbackRow {
+  id: number;
+  orderId: number;
+  at: string;
+  taste: number;
+  quality: number;
+  remarks: string | null;
+  date: string;
+  session: string;
+  unit: string;
+  unitId: number;
+  by: string | null;
+  dishes: { name: string; plates: number }[];
+  ordered: number;
+  consumed: number | null;
+  leftover: number | null;
+}
+
+export interface EmergencyRow {
+  id: number;
+  unit: string;
+  session: string;
+  date: string;
+  peopleCount: number | null;
+  totalPlates: number | null;
+  status: string;
+  approval: "PENDING" | "APPROVED" | "DECLINED" | null;
+  declineReason: string | null;
+  requestedBy: string | null;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  consumed: number | null;
+  rated: { taste: number; quality: number } | null;
+}
+
 export interface Dish {
   id: number;
   name: string;
   group: DishGroup;
   bookable: boolean;
+  /** True = this goes out alongside a main dish and its quantity is derived
+      from that dish's plates, so it is not counted in the indent block. */
+  accompaniment: boolean;
   sortOrder: number;
   qtyPerPlate: number;
   unit: "NOS" | "G";
@@ -457,7 +495,7 @@ export const api = {
   clearMenuDay: (date: string, session: string) =>
     req<{ removed: number }>(`/menu-admin/day?date=${date}&session=${session}`, { method: "DELETE" }),
 
-  packing: (date: string, session: "BREAKFAST" | "DINNER") =>
+  packing: (date: string, session: "BREAKFAST" | "LUNCH" | "DINNER") =>
     req<{ ready: boolean; booked: number; total: number; missing: string[]; sheet: PackingSheet | null }>(
       `/packing/preview?date=${date}&session=${session}`
     ),
@@ -481,11 +519,28 @@ export const api = {
       body: JSON.stringify({ orderId, approve, reason }),
     }),
 
+  /** Booker feedback, for the people who cooked it. Kitchen + Super Admin. */
+  feedback: (q: { limit?: number; unitId?: number; session?: string } = {}) => {
+    const p = new URLSearchParams();
+    if (q.limit) p.set("limit", String(q.limit));
+    if (q.unitId) p.set("unitId", String(q.unitId));
+    if (q.session) p.set("session", q.session);
+    return req<FeedbackRow[]>(`/feedback/recent${p.toString() ? `?${p}` : ""}`);
+  },
+  feedbackSummary: () =>
+    req<{ count: number; avgTaste: number; avgQuality: number; poor: number; withRemarks: number }>(
+      "/feedback/summary"
+    ),
+
+  /** Every emergency order and what was decided. Super Admin. */
+  emergencyOrders: (status?: string) =>
+    req<EmergencyRow[]>(`/orders/emergency${status ? `?status=${status}` : ""}`),
+
   // --- SUPER_ADMIN ---
   dishes: () => req<Dish[]>("/admin/dishes"),
   saveDish: (
     id: number,
-    body: Partial<Pick<Dish, "group" | "bookable" | "qtyPerPlate" | "unit" | "packingFactor" | "packingVesselKg" | "ratePerPlate">>
+    body: Partial<Pick<Dish, "group" | "bookable" | "accompaniment" | "qtyPerPlate" | "unit" | "packingFactor" | "packingVesselKg" | "ratePerPlate">>
   ) => req<Dish>(`/admin/dishes/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   addDish: (body: {
     name: string;

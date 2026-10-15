@@ -8,6 +8,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { prisma, type Session, type VesselSession } from "@sk/db";
 import { calcDish } from "@sk/logic";
+import { menuFor } from "./menu.js";
 
 interface DishInfo {
   id: number;
@@ -35,7 +36,37 @@ export interface SessionSheet {
   rows: PackingRow[];
 }
 
-const VESSEL_MAP: Record<string, VesselSession> = { BREAKFAST: "MORNING", DINNER: "EVENING" };
+// Lunch has no vessel set of its own — the schema only knows MORNING and
+// EVENING — so it is packed into the morning cans, which is the batch it is
+// cooked in. If lunch ever uses its own sizes, this is the line to change
+// (and VesselSession needs a third value).
+const VESSEL_MAP: Record<string, VesselSession> = { BREAKFAST: "MORNING", LUNCH: "MORNING", DINNER: "EVENING" };
+
+/**
+ * Lunch order lines, worked out rather than stored.
+ *
+ * Tiffin and dinner are booked dish by dish, so their orders carry real line
+ * items. Lunch is booked as a headcount and nothing else, which is why it had
+ * no packing sheet at all: there was no per-dish anything to pack. Everyone
+ * eating lunch gets one of each item on that day's lunch menu, so the lines
+ * are the menu times the headcount — the same arithmetic the booking screen
+ * does for the other two meals, done at sheet time instead of booking time.
+ *
+ * Deriving it here rather than writing it into the order keeps a late menu
+ * change visible: edit the lunch menu and the sheet follows, which would not
+ * happen if the lines had been frozen when the booker typed a number.
+ */
+async function lunchItems(date: Date, people: number) {
+  if (people <= 0) return [];
+  const menu = await menuFor(date, "LUNCH");
+  const plates = new Map<number, number>();
+  const add = (dishId: number) => plates.set(dishId, (plates.get(dishId) ?? 0) + people);
+  for (const slot of menu) {
+    add(slot.dishId);
+    for (const a of slot.accompaniments) add(a.dishId);
+  }
+  return [...plates].map(([dishId, p]) => ({ dishId, plates: p }));
+}
 
 /**
  * An emergency order counts here only once an admin has approved it.
@@ -68,7 +99,6 @@ export async function coverage(date: Date, session: Session) {
 }
 
 export async function computeSession(date: Date, session: Session): Promise<SessionSheet | null> {
-  if (session === "LUNCH") return null;
   const vesselSession = VESSEL_MAP[session];
   const vessels = (
     await prisma.vesselSize.findMany({ where: { session: vesselSession }, orderBy: { size: "desc" } })
@@ -78,11 +108,32 @@ export async function computeSession(date: Date, session: Session): Promise<Sess
   const end = new Date(start);
   end.setDate(end.getDate() + 1);
 
-  const orders = await prisma.order.findMany({
+  const found = await prisma.order.findMany({
     where: { date: { gte: start, lt: end }, session, ...COOKABLE },
     include: { unit: true, items: { include: { dish: true } } },
     orderBy: { unitId: "asc" },
   });
+
+  // Lunch orders hold a headcount and no lines, so the lines are derived from
+  // the menu before anything else looks at them. Every step below then treats
+  // all three meals identically.
+  let orders = found;
+  if (session === "LUNCH") {
+    const dishes = new Map((await prisma.dish.findMany()).map((d) => [d.id, d]));
+    orders = await Promise.all(
+      found.map(async (o) => {
+        if (o.items.length > 0) return o;   // an order that does carry lines keeps them
+        const people = o.peopleCount ?? o.totalPlates ?? 0;
+        const derived = await lunchItems(o.date, people);
+        return {
+          ...o,
+          items: derived
+            .map((it) => ({ ...it, id: 0, orderId: o.id, dish: dishes.get(it.dishId)! }))
+            .filter((it) => it.dish),
+        } as typeof o;
+      })
+    );
+  }
 
   const seen = new Map<number, DishInfo>();
   for (const o of orders)
@@ -113,6 +164,13 @@ export async function computeSession(date: Date, session: Session): Promise<Sess
       const p = platesById.get(d.id) ?? 0;
       if (p > 0) { plates[d.id] = p; total += p; }
     }
+    // Tiffin and dinner are booked as a count per item group, so adding those
+    // counts up is the number of plates going out. Lunch is not: everybody
+    // eating gets one of every dish on the menu, so summing the columns
+    // multiplies the headcount by the length of the menu — 120 people came out
+    // as 840 plates. For lunch the total is the headcount, which is the only
+    // number the booker gave and the only one that means anything.
+    if (session === "LUNCH") total = o.peopleCount ?? o.totalPlates ?? total;
 
     const cells: PackingRow["cells"] = {};
     for (const d of dishOrder) {
@@ -274,6 +332,7 @@ export async function buildWorkbook(date: Date): Promise<ExcelJS.Workbook> {
   let r = 1;
   for (const [session, title] of [
     ["BREAKFAST", "Brandix Morning Delivery Sheet"],
+    ["LUNCH", "Brandix Lunch Delivery Sheet"],
     ["DINNER", "Brandix Evening Delivery Sheet"],
   ] as [Session, string][]) {
     const sheet = await computeSession(date, session);

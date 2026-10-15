@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { api, PackingSheet } from "../api";
+import { ymd, today } from "../util";
 
-export default function Packing({ date }: { date: string }) {
-  const [session, setSession] = useState<"BREAKFAST" | "DINNER">("BREAKFAST");
+export default function Packing({ date, setDate }: { date: string; setDate?: (d: string) => void }) {
+  const [session, setSession] = useState<"BREAKFAST" | "LUNCH" | "DINNER">("BREAKFAST");
   const [sheet, setSheet] = useState<PackingSheet | null>(null);
   const [gate, setGate] = useState<{ ready: boolean; booked: number; total: number } | null>(null);
   const [missing, setMissing] = useState<string[]>([]);
@@ -38,6 +39,14 @@ export default function Packing({ date }: { date: string }) {
             onClick={() => setSession("BREAKFAST")}
           >
             Morning
+          </button>
+          {/* Lunch is derived rather than booked dish by dish — see the note
+              under the table — but it packs and prints like the other two. */}
+          <button
+            className={`btn sm ${session === "LUNCH" ? "" : "ghost"}`}
+            onClick={() => setSession("LUNCH")}
+          >
+            Lunch
           </button>
           <button
             className={`btn sm ${session === "DINNER" ? "" : "ghost"}`}
@@ -78,6 +87,37 @@ export default function Packing({ date }: { date: string }) {
             The sheet below counts only what is in so far — it updates as the rest arrive.
           </p>
         </div>
+      )}
+
+      {/* Tiffin and dinner are booked today for tomorrow, so the cooking date
+          starts on tomorrow. Lunch is same-day, which meant clicking Lunch
+          usually landed on an empty sheet with no hint that the date was the
+          reason. */}
+      {session === "LUNCH" && date !== ymd(today()) && (
+        <div className="card soft" style={{ marginTop: 12 }}>
+          <div className="em-row">
+            <p className="muted" style={{ margin: 0 }}>
+              Lunch is ordered and served on the same day, and this sheet is set to{" "}
+              <b>{new Date(date).toDateString()}</b>.
+            </p>
+            {setDate && (
+              <button className="btn sm" onClick={() => setDate(ymd(today()))}>
+                Show today's lunch
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Lunch is booked as a headcount, so its dish quantities are worked out
+          from the lunch menu rather than typed by the booker. Saying so stops
+          the kitchen hunting for who entered these numbers. */}
+      {session === "LUNCH" && sheet && sheet.rows.length > 0 && (
+        <p className="muted" style={{ marginTop: 10 }}>
+          <i className="ti ti-info-circle" aria-hidden="true"></i>{" "}
+          Lunch is booked by headcount. Quantities below come from the lunch menu for this
+          date — change the menu and this sheet follows. Totals are people, not plates.
+        </p>
       )}
 
       {sheet && sheet.rows.length === 0 && <p className="muted">No orders for this session.</p>}

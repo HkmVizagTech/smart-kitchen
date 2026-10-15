@@ -150,6 +150,12 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
   const [tC, setTC] = useState<SlotCounts>({});
   const [dOn, setDOn] = useState(false);
   const [dC, setDC] = useState<SlotCounts>({});
+  // Tiffin and dinner are ordinarily the same items at the same counts, and
+  // typing them twice is both slow and the easiest way to end up with two
+  // numbers that were meant to match and do not. This copies tiffin across at
+  // submit time; they are still two separate orders, cooked, packed, closed
+  // out and verified independently.
+  const [dSame, setDSame] = useState(false);
   const [lOn, setLOn] = useState(false);
   const [lPpl, setLPpl] = useState("");
   const [eOn, setEOn] = useState(false);
@@ -252,7 +258,9 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
 
   const totalOf = (c: SlotCounts) => (c.ITEM1 ?? 0) + (c.ITEM2 ?? 0) + (c.ITEM3 ?? 0);
   const tTotal = useMemo(() => totalOf(tC), [tC]);
-  const dTotal = useMemo(() => totalOf(dC), [dC]);
+  // What dinner actually books: tiffin's counts when it is set to follow.
+  const dEff = useMemo(() => (dSame ? tC : dC), [dSame, tC, dC]);
+  const dTotal = useMemo(() => totalOf(dEff), [dEff]);
   const tMenu = menus[pkey(ymd(tomorrow()), "BREAKFAST")] ?? null;
   const dMenu = menus[pkey(ymd(tomorrow()), "DINNER")] ?? null;
   const lMenu = menus[pkey(ymd(today()), "LUNCH")] ?? null;
@@ -268,7 +276,7 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
     // assign the next free route — the old behaviour.
     const pick = (v: string) => (v ? { unitId: Number(v) } : {});
     if (tOn && tTotal > 0) jobs.push({ label: "Morning Tiffin", body: { bookedById: by, date: ymd(tomorrow()), session: "BREAKFAST", slots: tC, ...pick(tUnit) } });
-    if (dOn && dTotal > 0) jobs.push({ label: "Dinner", body: { bookedById: by, date: ymd(tomorrow()), session: "DINNER", slots: dC, ...pick(dUnit) } });
+    if (dOn && dTotal > 0) jobs.push({ label: "Dinner", body: { bookedById: by, date: ymd(tomorrow()), session: "DINNER", slots: dEff, ...pick(dUnit) } });
     if (lOn && +lPpl > 0) jobs.push({ label: "Lunch", body: { bookedById: by, date: ymd(today()), session: "LUNCH", peopleCount: +lPpl, ...pick(lUnit) } });
     if (eOn && +ePpl > 0) jobs.push({ label: "Emergency " + SES[eSes], body: { bookedById: by, date: ymd(today()), session: eSes, isEmergency: true, peopleCount: +ePpl, ...pick(eUnit) } });
     if (jobs.length === 0) { setErr("Turn on a meal and enter at least one plate count."); setBusy(false); return; }
@@ -329,9 +337,17 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
         <MealCard title="Morning Tiffin" on={tOn} setOn={setTOn} menu={tMenu} counts={tC} setCounts={setTC} total={tTotal}
           id="tiffin" progress={tProg} unit={tUnit} setUnit={setTUnit} blocked={gate?.BREAKFAST}
           past={pastFor("BREAKFAST")} menuError={tErr} retryMenu={loadMenus} requireRoute={admin} />
-        <MealCard title="Dinner" on={dOn} setOn={setDOn} menu={dMenu} counts={dC} setCounts={setDC} total={dTotal}
+        <MealCard title="Dinner" on={dOn} setOn={setDOn} menu={dMenu} counts={dEff} setCounts={setDC} total={dTotal}
           id="dinner" progress={dProg} unit={dUnit} setUnit={setDUnit} blocked={gate?.DINNER}
-          past={pastFor("DINNER")} menuError={dErr} retryMenu={loadMenus} requireRoute={admin} />
+          past={pastFor("DINNER")} menuError={dErr} retryMenu={loadMenus} requireRoute={admin}
+          copyFrom={{
+            label: "Same counts as tiffin",
+            on: dSame,
+            setOn: (v: boolean) => { setDSame(v); if (v) setDOn(true); },
+            note: tTotal > 0
+              ? `Using tiffin's ${tTotal} plates.`
+              : "Enter tiffin's counts and they will be copied here.",
+          }} />
       </div>
 
       <h2>Today (count only)</h2>
@@ -408,7 +424,7 @@ const perPlate = (d: MenuDish) => (d.unit === "NOS" ? `${d.qtyPerPlate} nos` : `
  * route, and the menu for that date decides what they are. So the form names
  * the dishes and asks only "how many plates".
  */
-function MealCard({ title, on, setOn, menu, menuError, retryMenu, counts, setCounts, total, id, progress, unit, setUnit, blocked, past, requireRoute }: {
+function MealCard({ title, on, setOn, menu, menuError, retryMenu, counts, setCounts, total, id, progress, unit, setUnit, blocked, past, requireRoute, copyFrom }: {
   title: string; on: boolean; setOn: (b: boolean) => void; menu: DayMenu | null;
   /** Set when the menu could not be fetched, so the card says so instead of
    *  claiming to still be loading. */
@@ -421,7 +437,12 @@ function MealCard({ title, on, setOn, menu, menuError, retryMenu, counts, setCou
   blocked?: MealStatus;
   /** This booker's own past orders of THIS meal, newest first. */
   past: Booking[];
+  /** Offers to take the counts from another meal instead of typing them again.
+   *  While it is on, the steppers here show that meal's numbers and are not
+   *  editable — two sets of figures that disagree is the thing this avoids. */
+  copyFrom?: { label: string; note: string; on: boolean; setOn: (b: boolean) => void };
 }) {
+  const locked = !!copyFrom?.on;
   const slots = (menu?.slots ?? []).filter((s) => s.group);
 
   const set = (group: string, v: string) =>
@@ -439,6 +460,18 @@ function MealCard({ title, on, setOn, menu, menuError, retryMenu, counts, setCou
         <Switch on={on} setOn={setOn} />
       </div>
       <BlockedNote status={blocked} />
+      {/* Above the on/off copy, because ticking it is what turns this meal on:
+          a booker who wants dinner to match tiffin should not have to find the
+          switch first. */}
+      {copyFrom && blocked?.canOrder !== false && (
+        <label className="copyfrom">
+          <input type="checkbox" checked={copyFrom.on} onChange={(e) => copyFrom.setOn(e.target.checked)} />
+          <span>
+            <b>{copyFrom.label}</b>
+            <small>{copyFrom.note}</small>
+          </span>
+        </label>
+      )}
       {!on && <p className="muted" style={{ margin: "6px 0 0" }}>Turn on to enter plate counts.</p>}
 
       {on && <RoutePicker id={id} progress={progress} value={unit} onChange={setUnit} requireChoice={requireRoute} />}
@@ -452,7 +485,7 @@ function MealCard({ title, on, setOn, menu, menuError, retryMenu, counts, setCou
 
       {on && slots.length > 0 && (
         <>
-          <QuickFill past={past} counts={counts} apply={setCounts} slots={slots} />
+          {!locked && <QuickFill past={past} counts={counts} apply={setCounts} slots={slots} />}
           <div className="slots">
             {slots.map((slot) => {
               const val = counts[slot.group as "ITEM1"] ?? 0;
@@ -469,16 +502,20 @@ function MealCard({ title, on, setOn, menu, menuError, retryMenu, counts, setCou
                       </div>
                     )}
                   </div>
-                  <div className={`stepper ${val > 0 ? "filled" : ""}`}>
-                    <button type="button" aria-label={`Fewer ${slot.dish.name}`} disabled={val === 0} onClick={() => step(slot.group!, -1)}>−</button>
-                    <input
-                      inputMode="numeric" placeholder="0"
-                      aria-label={`${GROUP_LABEL[slot.group!]} plates`}
-                      value={val === 0 ? "" : String(val)}
-                      onChange={(e) => set(slot.group!, e.target.value)}
-                    />
-                    <button type="button" aria-label={`More ${slot.dish.name}`} onClick={() => step(slot.group!, +1)}>+</button>
-                  </div>
+                  {locked ? (
+                    <div className="readnum">{val}</div>
+                  ) : (
+                    <div className={`stepper ${val > 0 ? "filled" : ""}`}>
+                      <button type="button" aria-label={`Fewer ${slot.dish.name}`} disabled={val === 0} onClick={() => step(slot.group!, -1)}>−</button>
+                      <input
+                        inputMode="numeric" placeholder="0"
+                        aria-label={`${GROUP_LABEL[slot.group!]} plates`}
+                        value={val === 0 ? "" : String(val)}
+                        onChange={(e) => set(slot.group!, e.target.value)}
+                      />
+                      <button type="button" aria-label={`More ${slot.dish.name}`} onClick={() => step(slot.group!, +1)}>+</button>
+                    </div>
+                  )}
                 </div>
               );
             })}
