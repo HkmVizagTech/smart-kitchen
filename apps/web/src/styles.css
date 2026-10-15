@@ -966,3 +966,15 @@ tr.totalrow td { border-top: 2px solid var(--border-2); }
   font-size: 12px; font-weight: 650; padding: 4px 10px; border-radius: 999px;
   background: var(--surface-soft); border: 1px solid var(--border); color: var(--text-2);
 }
+
+/* An admin booking on a route's behalf. Stated plainly at the top of the form,
+   because the screen is otherwise identical to a booker's and the difference —
+   who owns the close-out afterwards — is invisible until it matters. */
+.onbehalf {
+  display: flex; gap: 11px; align-items: flex-start;
+  margin: 14px 0 4px; padding: 13px 15px; border-radius: var(--radius);
+  background: var(--primary-soft); border: 1px solid var(--primary);
+}
+.onbehalf > i { color: var(--primary-dark); font-size: 20px; flex-shrink: 0; margin-top: 1px; }
+.onbehalf b { font-size: 14px; color: var(--ink); }
+.onbehalf p { margin: 4px 0 0; font-size: 13px; color: var(--text-2); line-height: 1.5; }

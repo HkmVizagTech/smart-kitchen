@@ -47,6 +47,15 @@ export default function Packing({ date }: { date: string }) {
           </button>
         </div>
         <a
+          className="btn ghost sm"
+          href={api.deliveryNotesUrl(date, session)}
+          target="_blank"
+          rel="noreferrer"
+          style={{ textDecoration: "none", marginRight: 8 }}
+        >
+          <i className="ti ti-printer" aria-hidden="true"></i> Delivery notes
+        </a>
+        <a
           className={`btn sm ${gate?.ready ? "" : "ghost"}`}
           href={api.packingExcelUrl(date, !gate?.ready)}
           style={{ textDecoration: "none" }}

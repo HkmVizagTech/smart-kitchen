@@ -21,6 +21,12 @@ const API = process.env.API ?? "http://127.0.0.1:4200";
 // password the four starter roles actually have is whatever that run produced.
 // Pass it in: TEST_PASSWORD=... node test/flow.test.mjs
 const PASSWORD = process.env.TEST_PASSWORD ?? "testpass123";
+// This suite CREATES accounts, and the API enforces a minimum password length.
+// Failing here says so, instead of letting every later check fail on a 401.
+if (PASSWORD.length < 8) {
+  console.log(`FAIL  TEST_PASSWORD must be at least 8 characters (got ${PASSWORD.length}) — this suite creates accounts.`);
+  process.exit(1);
+}
 
 let pass = 0, fail = 0;
 function check(ok, label, detail = "") {
@@ -52,7 +58,20 @@ const istYmd = (offsetDays = 0) => {
 };
 const TOMORROW = istYmd(1);
 
-const login = async (u) => (await call("/auth/login", { method: "POST", body: { identifier: u, password: PASSWORD } })).data.token;
+// /auth/login is rate-limited (10 a minute by default) and this suite signs in
+// a dozen accounts, so a 429 here means the limiter is working, not that the
+// credentials are wrong. Wait it out instead of failing every later check.
+async function login(u) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const r = await call("/auth/login", { method: "POST", body: { identifier: u, password: PASSWORD } });
+    if (r.status === 200 && r.data?.token) return r.data.token;
+    if (r.status !== 429) throw new Error(`login ${u}: ${r.status} ${r.data?.error ?? ""}`);
+    const wait = Number(String(r.data?.error ?? "").match(/(\d+) second/)?.[1] ?? 10) + 1;
+    console.log(`      (rate limited, waiting ${wait}s)`);
+    await new Promise((res) => setTimeout(res, wait * 1000));
+  }
+  throw new Error(`login ${u}: still rate limited`);
+}
 
 console.log(`\n--- signing in ---`);
 const booking = await login("booking");

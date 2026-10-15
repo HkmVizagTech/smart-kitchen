@@ -12,7 +12,20 @@ const API = process.env.API_URL || 'http://127.0.0.1:4200';
 //   TEST_PASSWORD=... node test/menu-editor.test.mjs
 const PASSWORD = process.env.TEST_PASSWORD || 'devpass';
 let pass=0,fail=0; const ck=(o,l)=>o?(pass++,console.log('PASS ',l)):(fail++,console.log('FAIL ',l));
-const login=async u=>(await(await fetch(`${API}/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({identifier:u,password:PASSWORD})})).json()).token;
+// Wait out the login rate limiter rather than reporting it as a failure.
+async function login(u) {
+  for (let i = 0; i < 6; i++) {
+    const r = await fetch(`${API}/auth/login`, { method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({ identifier:u, password:PASSWORD }) });
+    const d = await r.json().catch(()=>({}));
+    if (r.ok && d.token) return d.token;
+    if (r.status !== 429) throw new Error(`login ${u}: ${r.status} ${d.error ?? ''}`);
+    const w = Number(String(d.error??'').match(/(\d+) second/)?.[1] ?? 10) + 1;
+    console.log(`      (rate limited, waiting ${w}s)`);
+    await new Promise(res=>setTimeout(res, w*1000));
+  }
+  throw new Error(`login ${u}: still rate limited`);
+}
 const kt=await login('kitchen'), bk=await login('booking');
 const call=(t,p,o={})=>fetch(API+p,{...o,headers:{'content-type':'application/json',authorization:`Bearer ${t}`,...(o.headers||{})}});
 
@@ -62,8 +75,17 @@ const plan3=await(await call(kt,'/menu-admin/plan?session=BREAKFAST&week=1')).js
 const same=plan3.days.find(x=>x.day==='TUE');
 ck(same.slots.length===3, 'the weekly plan is untouched by a one-day change');
 
-// booked day cannot be re-planned
-r=await call(kt,'/menu-admin/day',{method:'PUT',body:JSON.stringify({session:'BREAKFAST',date:'2026-10-01',
+// A day some route has already booked cannot be re-planned: their order lines
+// were written at booking time and a menu change now would not reach them.
+// The test books that day itself rather than relying on one being there.
+const TOM = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
+const bkMenu = await (await call(bk, `/menu?date=${TOM}&session=BREAKFAST`)).json();
+const bkSlots = {}; (bkMenu.slots || []).forEach((x) => { if (x.group) bkSlots[x.group] = 5; });
+const placed = await call(bk, '/orders', { method:'POST',
+  body: JSON.stringify({ date: TOM, session:'BREAKFAST', slots: bkSlots }) });
+ck(placed.status === 200 || placed.status === 409, `a route has booked ${TOM} (${placed.status})`);
+
+r=await call(kt,'/menu-admin/day',{method:'PUT',body:JSON.stringify({session:'BREAKFAST',date:TOM,
   slots:[{group:'ITEM1',dishId:wada.id,accompanimentIds:[]}]})});
 ck(r.status===409, `a day with orders on it is refused (${r.status})`);
 

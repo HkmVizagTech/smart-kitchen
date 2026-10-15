@@ -58,6 +58,13 @@ enum OrderStatus {
   CLOSED // consumption + feedback submitted and verified
 }
 
+/// Emergency orders only — a normal order carries null.
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  DECLINED
+}
+
 enum ConsumptionStatus {
   PENDING
   VERIFIED
@@ -102,6 +109,7 @@ model User {
   unitId   Int? // legacy; bookers are no longer tied to a unit
   unit     Unit?   @relation(fields: [unitId], references: [id])
   bookings Order[] // orders this booker placed
+  approvedOrders Order[] @relation("OrderApprover") // emergency orders this admin decided
   notifications Notification[]
 
   @@index([role])
@@ -238,6 +246,14 @@ model Order {
   date        DateTime // the day the food is FOR
   session     Session
   isEmergency Boolean     @default(false)
+  /// Emergency orders need an admin to agree before the kitchen cooks them.
+  /// Null on a normal order, which needs no approval.
+  approval      ApprovalStatus?
+  approvedBy    User?           @relation("OrderApprover", fields: [approvedById], references: [id])
+  approvedById  Int?
+  approvedAt    DateTime?
+  /// Why an emergency order was turned down, shown to whoever asked for it.
+  declineReason String?
   bookedBy    User?       @relation(fields: [bookedById], references: [id])
   bookedById  Int? // which booking person placed it
 

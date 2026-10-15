@@ -37,6 +37,15 @@ export interface SessionSheet {
 
 const VESSEL_MAP: Record<string, VesselSession> = { BREAKFAST: "MORNING", DINNER: "EVENING" };
 
+/**
+ * An emergency order counts here only once an admin has approved it.
+ *
+ * Cooking from a request nobody has agreed to is the thing the approval step
+ * exists to prevent, so a pending or declined emergency is absent from both
+ * the coverage count and the sheet.
+ */
+const COOKABLE = { OR: [{ isEmergency: false }, { approval: "APPROVED" as const }] };
+
 // How many of the kitchens have an order for this date+session.
 export async function coverage(date: Date, session: Session) {
   const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -46,7 +55,7 @@ export async function coverage(date: Date, session: Session) {
   const bookedIds = new Set(
     (
       await prisma.order.findMany({
-        where: { date: { gte: start, lt: end }, session },
+        where: { date: { gte: start, lt: end }, session, ...COOKABLE },
         distinct: ["unitId"],
         select: { unitId: true },
       })
@@ -70,7 +79,7 @@ export async function computeSession(date: Date, session: Session): Promise<Sess
   end.setDate(end.getDate() + 1);
 
   const orders = await prisma.order.findMany({
-    where: { date: { gte: start, lt: end }, session },
+    where: { date: { gte: start, lt: end }, session, ...COOKABLE },
     include: { unit: true, items: { include: { dish: true } } },
     orderBy: { unitId: "asc" },
   });
@@ -282,4 +291,53 @@ export async function buildWorkbook(date: Date): Promise<ExcelJS.Workbook> {
     r = renderBlock(wb, ws, r, heading, dateStr, sheet, logoId);
   }
   return wb;
+}
+
+// ------------------------------------------------------- DELIVERY NOTES
+/**
+ * One slip per route, to travel with the food.
+ *
+ * The packing sheet is a single wide grid covering every route at once — right
+ * for the kitchen, useless on a van. This is the same figures cut the other
+ * way: one page per route, listing only what that route is receiving, so the
+ * person handing the cans over can check them off.
+ */
+export interface DeliveryNote {
+  unit: string;
+  session: Session;
+  date: Date;
+  totalPlates: number;
+  lines: {
+    dish: string;
+    qty: number;
+    unit: "pcs" | "kg";
+    /** Human-readable can breakdown, e.g. "3 × 200" or "6.75 × 20 kg". */
+    cans: string;
+  }[];
+}
+
+export async function deliveryNotes(date: Date, session: Session): Promise<DeliveryNote[]> {
+  const sheet = await computeSession(date, session);
+  if (!sheet) return [];
+  const byName = new Map(sheet.dishOrder.map((d) => [d.name, d]));
+
+  return sheet.rows.map((row) => ({
+    unit: row.unit,
+    session,
+    date,
+    totalPlates: row.totalPlates,
+    lines: sheet.dishOrder
+      .filter((d) => row.cells[d.name])
+      .map((d) => {
+        const cell = row.cells[d.name]!;
+        const counted = byName.get(d.name)?.packingVesselKg == null;
+        const cans = counted
+          ? Object.entries(cell.vessels ?? {})
+              .filter(([, n]) => n > 0)
+              .map(([size, n]) => `${n} × ${size}`)
+              .join(" + ") || "—"
+          : `${cell.vesselCount ?? 0} × ${byName.get(d.name)?.packingVesselKg} kg`;
+        return { dish: d.name, qty: cell.qty, unit: counted ? ("pcs" as const) : ("kg" as const), cans };
+      }),
+  }));
 }

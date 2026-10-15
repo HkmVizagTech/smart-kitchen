@@ -25,18 +25,24 @@ import { randomBytes } from "node:crypto";
 const prisma = new PrismaClient();
 
 // [name, group, qtyPerPlate, unit, packingFactor, packingVesselKg|null, sortOrder, accompaniment]
+// qtyPerPlate is what the booker sees on the menu; packingFactor is what the
+// kitchen cooks per plate. For most dishes they are the same number, and for
+// Sambar, FG Chutney and Kurma they had drifted apart — the menu said 65/85/150
+// while the kitchen cooked 60/80/120. The cooked figures are the ones that
+// reproduce the kitchen's own 28 Apr packing sheet, so the displayed figures
+// were brought to them. A route is now told what actually arrives.
 const DISHES: [string, DishGroup, number, DishUnit, number, number | null, number, boolean][] = [
   // ITEM 1
   ["Idly", "ITEM1", 4, "NOS", 4, null, 1, false],
-  ["Sambar", "ITEM1", 65, "G", 60, 15, 2, true],
-  ["FG Chutney", "ITEM1", 85, "G", 80, 15, 3, true],
+  ["Sambar", "ITEM1", 60, "G", 60, 15, 2, true],
+  ["FG Chutney", "ITEM1", 80, "G", 80, 15, 3, true],
   ["Tomato Chutney", "ITEM1", 50, "G", 50, 15, 4, true],
   // ITEM 2
   ["White Rice", "ITEM2", 300, "G", 300, 20, 1, false],
   ["Tomato Dal", "ITEM2", 150, "G", 150, 15, 2, true],
   ["Pachadi", "ITEM2", 50, "G", 50, 15, 3, true],
   ["Biryani", "ITEM2", 300, "G", 300, 20, 4, false],
-  ["Kurma", "ITEM2", 150, "G", 120, 15, 5, true],
+  ["Kurma", "ITEM2", 120, "G", 120, 15, 5, true],
   ["Lemon Rice", "ITEM2", 300, "G", 300, 20, 6, false],
   ["Raita", "ITEM2", 50, "G", 50, 15, 8, true],
   ["Pulihora", "ITEM2", 300, "G", 300, 20, 9, false],

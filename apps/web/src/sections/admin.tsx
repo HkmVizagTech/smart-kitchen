@@ -500,6 +500,79 @@ function ConfirmModal({ title, body, confirmLabel, busy, onClose, onConfirm }: {
 }
 
 // ---------------- DASHBOARD ----------------
+/**
+ * Emergency orders waiting on a decision.
+ *
+ * The booking screen always told a route that an emergency order "needs admin
+ * approval". Nobody was ever asked — the order simply appeared. This is where
+ * the asking happens, and until it is answered the kitchen does not see the
+ * order and the packing sheet does not count it.
+ */
+function EmergencyQueue() {
+  const [rows, setRows] = useState<Awaited<ReturnType<typeof api.pendingEmergencies>> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [declining, setDeclining] = useState<number | null>(null);
+  const [reason, setReason] = useState("");
+  const [err, setErr] = useState("");
+
+  const load = () => api.pendingEmergencies().then(setRows).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []);
+
+  async function decide(id: number, approve: boolean, why?: string) {
+    setBusy(true); setErr("");
+    try {
+      await api.decideEmergency(id, approve, why);
+      setDeclining(null); setReason("");
+      await load();
+    } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+  }
+
+  if (!rows || rows.length === 0) return null;
+  return (
+    <div className="card" style={{ borderLeft: "3px solid var(--warn)" }}>
+      <div className="section-title">
+        <i className="ti ti-urgent" aria-hidden="true"></i>{" "}
+        {rows.length === 1 ? "An emergency order needs your decision" : `${rows.length} emergency orders need your decision`}
+      </div>
+      <p className="muted" style={{ marginTop: 4 }}>
+        The kitchen will not see these until you approve them.
+      </p>
+      {err && <div className="err">{err}</div>}
+      {rows.map((r) => (
+        <div key={r.id} style={{ padding: "11px 0", borderBottom: "1px solid var(--border)" }}>
+          <div className="between">
+            <div>
+              <b>{r.unit}</b> · {r.session} · {r.peopleCount ?? 0} people
+              <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>
+                for {new Date(r.date).toDateString()}
+                {r.requestedBy ? ` · asked for by ${r.requestedBy}` : ""}
+              </div>
+            </div>
+            {declining === r.id ? null : (
+              <div className="row" style={{ gap: 8 }}>
+                <button className="btn ghost sm" disabled={busy} onClick={() => setDeclining(r.id)}>Decline</button>
+                <button className="btn sm" disabled={busy} onClick={() => decide(r.id, true)}>Approve</button>
+              </div>
+            )}
+          </div>
+          {declining === r.id && (
+            <div style={{ marginTop: 9 }}>
+              <label className="lab">Why are you declining it?</label>
+              <input value={reason} onChange={(e) => setReason(e.target.value)}
+                placeholder="so the route knows — e.g. too late to cook for today" />
+              <div className="row" style={{ gap: 8, marginTop: 9 }}>
+                <button className="btn ghost sm" onClick={() => { setDeclining(null); setReason(""); }}>Cancel</button>
+                <button className="btn sm" disabled={busy || reason.trim().length < 3}
+                  onClick={() => decide(r.id, false, reason)}>Send decline</button>
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function Dashboard() {
   const { data, error, loading } = useAsync(() => api.dashboard());
   if (loading) return <p className="muted">Loading…</p>;
@@ -517,6 +590,7 @@ export function Dashboard() {
     <div>
       <h1>Dashboard</h1>
       <p className="muted">Tomorrow's booking progress and today's activity.</p>
+      <EmergencyQueue />
       <div className="stats-grid">
         <Cover label="Tomorrow · Tiffin" s={d.tomorrow.breakfast} />
         <Cover label="Tomorrow · Dinner" s={d.tomorrow.dinner} />

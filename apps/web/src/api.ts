@@ -140,6 +140,8 @@ export interface Order {
   status: string;
   unit: { name: string };
   items: OrderItem[];
+  /** Who placed it, so the kitchen can see an admin booked it on a route's behalf. */
+  bookedBy: { name: string; role: Role } | null;
 }
 
 /** An order as the booker's own list shows it (flattened, no ids on items). */
@@ -156,6 +158,11 @@ export interface Booking {
   consumptionStatus: string | null;
   /** Feedback is the last step, so this is what says a close-out is finished. */
   hasFeedback: boolean;
+  /** Emergency orders only: whether an admin has agreed to it yet. */
+  approval: "PENDING" | "APPROVED" | "DECLINED" | null;
+  declineReason: string | null;
+  /** True while the order can still be changed — see PATCH /orders/:id. */
+  canEdit: boolean;
   /** Why verification sent the close-out back, if they did. */
   rejectionReason: string | null;
   /** Rupees owed once verified. */
@@ -163,8 +170,12 @@ export interface Booking {
   /** The three plate counts as booked, for one-tap repeats. */
   slots: SlotCounts;
   needsCloseOut: boolean;
-  /** Who placed it. The list covers every booker, not just the caller. */
+  /** Who placed it. A booker only ever sees their own; admins see everyone's. */
   bookedById: number | null;
+  /** Name and role of whoever placed it. */
+  placedBy: { name: string; role: Role } | null;
+  /** True when a Super Admin booked this on the route's behalf. */
+  onBehalf: boolean;
   /** True when the signed-in user is the one who placed it. */
   mine: boolean;
 }
@@ -390,6 +401,18 @@ export const api = {
   recentBookings: () => req<Booking[]>("/bookings/recent"),
   closeoutItems: (orderId: number) => req<CloseoutItems>(`/orders/${orderId}/closeout-items`),
   bookingStatus: () => req<BookingStatus>("/me/booking-status"),
+  /** The configured lunch cutoff, so the screen never states a different time
+   *  from the one the rule enforces. */
+  bookingRules: () => req<{ lunchDeadline: string }>("/booking/rules"),
+
+  // --- EMERGENCY APPROVAL (super admin) ---
+  pendingEmergencies: () =>
+    req<{ id: number; unit: string; session: string; date: string;
+          peopleCount: number | null; requestedBy: string | null }[]>("/orders/emergency/pending"),
+  decideEmergency: (id: number, approve: boolean, reason?: string) =>
+    req<{ ok: true }>(`/orders/${id}/approval`, {
+      method: "POST", body: JSON.stringify({ approve, reason }),
+    }),
   progress: (date: string, session: string) =>
     req<Progress>(`/booking/progress?date=${date}&session=${session}`),
   placeOrder: (body: Record<string, unknown>) =>
@@ -400,6 +423,11 @@ export const api = {
   submitConsumption: (body: Record<string, unknown>) =>
     req<unknown>("/orders/consumption", { method: "POST", body: JSON.stringify(body) }),
   /** Step 2 — only accepted once the consumption has been verified. */
+  /** Change the quantities on an order already placed. */
+  editOrder: (id: number, body: { slots?: SlotCounts; peopleCount?: number }) =>
+    req<{ ok: true; totalPlates: number | null }>(`/orders/${id}`, {
+      method: "PATCH", body: JSON.stringify(body),
+    }),
   submitFeedback: (body: { orderId: number; taste: number; quality: number; remarks?: string }) =>
     req<unknown>("/orders/feedback", { method: "POST", body: JSON.stringify(body) }),
 
@@ -435,6 +463,10 @@ export const api = {
     ),
   // A browser navigation cannot send an Authorization header, so the token
   // rides along as a query param. The API accepts it for this route only.
+  /** Printable per-route slips. Opened as a link, so the token rides along. */
+  deliveryNotesUrl: (date: string, session?: string) =>
+    `${API_BASE}/packing/delivery-notes?date=${date}${session ? `&session=${session}` : ""}` +
+    `&token=${encodeURIComponent(getToken() ?? "")}`,
   packingExcelUrl: (date: string, force = false) =>
     `${API_BASE}/packing/excel?date=${date}${force ? "&force=1" : ""}&token=${encodeURIComponent(getToken() ?? "")}`,
 

@@ -1,6 +1,6 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { prisma } from "@sk/db";
-import { canPlaceOrder, type Session as Sess } from "@sk/logic";
+import { canPlaceOrder, DEFAULT_LUNCH_DEADLINE, type Session as Sess } from "@sk/logic";
 import { notifyRoles, notifyUsers } from "../notify.js";
 import { must, requireAuth, requireRole } from "../guard.js";
 import { dayRange } from "../time.js";
@@ -9,6 +9,18 @@ import { expandSlots, menuFor } from "../menu.js";
 const SES_LABEL: Record<string, string> = { BREAKFAST: "Tiffin", LUNCH: "Lunch", DINNER: "Dinner" };
 
 export default async function orderRoutes(app: FastifyInstance) {
+  /** The lunch cutoff as configured, "HH:MM" in India time. */
+  async function lunchDeadline(): Promise<string> {
+    const row = await prisma.setting.findUnique({ where: { key: "lunch_deadline" } });
+    return row?.value?.trim() || DEFAULT_LUNCH_DEADLINE;
+  }
+
+  // The booking screen prints the cutoff, so it has to read the same value the
+  // rule uses rather than carrying its own copy of "11:00".
+  app.get("/booking/rules", { preHandler: requireAuth }, async () => ({
+    lunchDeadline: await lunchDeadline(),
+  }));
+
   // What is on the menu for one date and meal.
   //
   // This is what makes the three-number booking form possible: the booker is
@@ -54,15 +66,23 @@ export default async function orderRoutes(app: FastifyInstance) {
     return { ITEM1: group("ITEM1"), ITEM2: group("ITEM2"), ITEM3: group("ITEM3") };
   });
 
-  // Whether a unit may still place its next order (reorder gate).
-  app.get<{ Params: { unitId: string } }>("/units/:unitId/can-order", { preHandler: requireAuth }, async (req) => {
+  // Whether a route may still place its next order (reorder gate, per route).
+  //
+  // Pass ?session= to ask about one meal, which is what actually gates a
+  // booking — tiffin and dinner are separate chains. Without it the answer
+  // covers any open order on the route, which is the looser question.
+  app.get<{ Params: { unitId: string }; Querystring: { session?: string } }>(
+    "/units/:unitId/can-order",
+    { preHandler: requireAuth },
+    async (req) => {
     const unitId = Number(req.params.unitId);
-    // Find the most recent non-closed order for this unit.
-    const open = await prisma.order.findFirst({
-      where: { unitId, status: { not: "CLOSED" } },
-      include: { consumption: true, feedback: true },
-      orderBy: { date: "desc" },
-    });
+    const open = req.query.session
+      ? (await blockingOrderForUnit(unitId, req.query.session))?.order ?? null
+      : await prisma.order.findFirst({
+          where: { unitId, status: { not: "CLOSED" } },
+          include: { consumption: true, feedback: true },
+          orderBy: { date: "desc" },
+        });
     if (!open) return { canOrder: true, reason: "No open order.", order: null };
     const step = nextStep(open);
     const needs = step === "nothing" ? [] : [step];
@@ -80,7 +100,8 @@ export default async function orderRoutes(app: FastifyInstance) {
         consumptionStatus: open.consumption?.status ?? null,
       },
     };
-  });
+  }
+  );
 
   // All of a unit's bookings (most recent first) for the My Bookings list.
   app.get<{ Params: { unitId: string } }>("/units/:unitId/orders", { preHandler: requireAuth }, async (req) => {
@@ -111,7 +132,14 @@ export default async function orderRoutes(app: FastifyInstance) {
       hasConsumption: !!o.consumption,
       hasFeedback: !!o.feedback,
       consumptionStatus: o.consumption?.status ?? null,
-      needsCloseOut: !o.consumption || !o.feedback || o.consumption.status === "REJECTED",
+      // See the note on the same field in /bookings/recent: an emergency order
+      // that was declined, or not yet decided, is not awaiting a close-out.
+      needsCloseOut:
+        o.approval === "DECLINED" || o.approval === "PENDING"
+          ? false
+          : !o.consumption || !o.feedback || o.consumption.status === "REJECTED",
+      approval: o.approval,
+      declineReason: o.declineReason,
     }));
   });
 
@@ -140,8 +168,16 @@ export default async function orderRoutes(app: FastifyInstance) {
     const b = req.body;
     // The booker is whoever is signed in — never a user id sent in the body.
     const bookedById = must(req).userId;
+    // A Super Admin books only on a route's behalf — when its own booker is
+    // away. That is a deliberate act, so they must name the route: auto-assign
+    // would quietly hand them whichever one happened to be free, which is not
+    // what "cover for Unit-3 today" means.
+    const onBehalf = must(req).role === "SUPER_ADMIN";
+    if (onBehalf && !b.unitId)
+      return reply.code(422).send({ error: "Choose which route you are booking for." });
+
     const forDate = new Date(b.date);
-    const check = canPlaceOrder(b.session, new Date(), forDate, b.isEmergency);
+    const check = canPlaceOrder(b.session, new Date(), forDate, b.isEmergency, await lunchDeadline());
     if (!check.allowed) return reply.code(422).send({ error: check.reason });
 
     // One order per booker, per meal, per day. Applies whether the booker chose
@@ -151,7 +187,11 @@ export default async function orderRoutes(app: FastifyInstance) {
     // Two separate limits are in play and both matter:
     //   this one      — one person cannot book the same meal twice in a day
     //   the DB index  — one route holds at most one order per date+session
-    if (!b.isEmergency) {
+    //
+    // An admin covering for more than one absent booker is the one case where
+    // the first limit is wrong — they are placing one order per ROUTE, not two
+    // of their own. The DB index still stops a route being booked twice.
+    if (!b.isEmergency && !onBehalf) {
       const dup = await prisma.order.findFirst({
         where: { bookedById, session: b.session, isEmergency: false, date: dayRange(b.date) },
         include: { unit: true },
@@ -163,9 +203,13 @@ export default async function orderRoutes(app: FastifyInstance) {
     }
 
     // The reorder gate. First order of a meal is free; after that the previous
-    // one must be closed out.
+    // one must be closed out. For an admin the chain follows the ROUTE they are
+    // covering rather than the admin themselves, for the same reason: covering
+    // Unit-3 should not be held up by an unclosed Unit-5.
     if (!b.isEmergency) {
-      const blocked = await blockingOrder(bookedById, b.session);
+      const blocked = onBehalf
+        ? await blockingOrderForUnit(Number(b.unitId), b.session)
+        : await blockingOrder(bookedById, b.session);
       if (blocked) {
         const when = blocked.order.date.toISOString().slice(0, 10);
         return reply.code(409).send({
@@ -255,6 +299,9 @@ export default async function orderRoutes(app: FastifyInstance) {
           date: forDate,
           session: b.session,
           isEmergency: b.isEmergency ?? false,
+          // An emergency order waits for an admin. The screen has always said
+          // so; until now nobody was actually asked.
+          approval: b.isEmergency ? "PENDING" : null,
           peopleCount: b.peopleCount,
           totalPlates: finalItems.length ? totalPlates : b.peopleCount ?? null,
           items: finalItems.length
@@ -264,14 +311,26 @@ export default async function orderRoutes(app: FastifyInstance) {
         include: { items: true, unit: true },
       });
       const after = await coverage(forDate, b.session);
-      // Notify kitchen + super admin that a new order came in.
-      await notifyRoles(["KITCHEN_ADMIN", "SUPER_ADMIN"], {
-        type: "ORDER_PLACED",
-        title: "New booking",
-        body: `${chosenUnit.name} · ${SES_LABEL[b.session] ?? b.session} · ${order.totalPlates ?? 0} plates`,
-        section: "orders",
-        orderId: order.id,
-      });
+      const where = `${chosenUnit.name} · ${SES_LABEL[b.session] ?? b.session}`;
+      if (order.isEmergency) {
+        // Goes to the admins to decide, not to the kitchen to cook. The kitchen
+        // is told once it is approved.
+        await notifyRoles(["SUPER_ADMIN"], {
+          type: "EMERGENCY_REQUESTED",
+          title: "Emergency order to approve",
+          body: `${where} · ${order.peopleCount ?? 0} people — waiting for your decision.`,
+          section: "orders",
+          orderId: order.id,
+        });
+      } else {
+        await notifyRoles(["KITCHEN_ADMIN", "SUPER_ADMIN"], {
+          type: "ORDER_PLACED",
+          title: "New booking",
+          body: `${where} · ${order.totalPlates ?? 0} plates`,
+          section: "orders",
+          orderId: order.id,
+        });
+      }
       return { ...order, assignedUnit: chosenUnit.name, booked: after.booked, total: after.total };
     } catch (e: any) {
       if (e.code === "P2002")
@@ -319,6 +378,28 @@ export default async function orderRoutes(app: FastifyInstance) {
     return { order: open, needs: [nextStep(open)] };
   }
 
+  /**
+   * The same gate, keyed on the route rather than the person.
+   *
+   * Used when a Super Admin books on a route's behalf: the obligation belongs
+   * to the route being covered, so covering two absent bookers at once is not
+   * treated as one person trying to order twice.
+   */
+  async function blockingOrderForUnit(unitId: number, session: string) {
+    const open = await prisma.order.findFirst({
+      where: {
+        unitId,
+        session: session as any,
+        isEmergency: false,
+        OR: [{ consumption: { is: null } }, { feedback: { is: null } }],
+      },
+      include: { unit: true, consumption: true, feedback: true },
+      orderBy: { date: "asc" },
+    });
+    if (!open) return null;
+    return { order: open, needs: [nextStep(open)] };
+  }
+
   /** The one thing standing between this order and the route's next booking. */
   function nextStep(o: {
     consumption: { status: string } | null;
@@ -339,6 +420,13 @@ export default async function orderRoutes(app: FastifyInstance) {
     const me = must(req);
     const sessions = ["BREAKFAST", "LUNCH", "DINNER"] as const;
     const out: Record<string, unknown> = {};
+    // An admin's gate is per route, not per person (see blockingOrderForUnit),
+    // so there is no single meal-level answer to give them here. Their screen
+    // asks per route instead, once they have chosen one.
+    if (me.role === "SUPER_ADMIN") {
+      for (const session of sessions) out[session] = { canOrder: true, blockedBy: null };
+      return out;
+    }
     for (const session of sessions) {
       const blocked = await blockingOrder(me.userId, session);
       out[session] = blocked
@@ -382,12 +470,31 @@ export default async function orderRoutes(app: FastifyInstance) {
   // it, so a client showing "My Bookings" can filter, and so the booking screen
   // can offer to repeat the caller's OWN last order rather than a stranger's.
   app.get("/bookings/recent", { preHandler: requireAuth }, async (req) => {
-    const me = must(req).userId;
+    const session = must(req);
+    const me = session.userId;
+    // A booker sees their own orders and nothing else. This used to return the
+    // last 60 orders in the kitchen to anyone signed in, which is why one
+    // booking appeared identically on every screen — and why the close-out
+    // picker was offering people other routes' meals to close.
+    //
+    // The three admin roles still see everything: the kitchen cooks from it,
+    // verification checks it, and a Super Admin has to be able to see a route
+    // they booked on behalf of.
+    const everyone = session.role !== "BOOKING";
     const orders = await prisma.order.findMany({
-      include: { unit: true, items: { include: { dish: true } }, consumption: true, feedback: true },
+      where: everyone ? {} : { bookedById: me },
+      include: {
+        unit: true,
+        items: { include: { dish: true } },
+        consumption: true,
+        feedback: true,
+        bookedBy: { select: { name: true, role: true } },
+      },
       orderBy: [{ date: "desc" }, { id: "desc" }],
       take: 60,
     });
+    const cutoff = await lunchDeadline();
+    const now = new Date();
     return orders.map((o) => ({
       id: o.id,
       unit: o.unit.name,
@@ -397,6 +504,11 @@ export default async function orderRoutes(app: FastifyInstance) {
       peopleCount: o.peopleCount,
       totalPlates: o.totalPlates,
       items: o.items.map((it) => ({ dish: it.dish.name, plates: it.plates })),
+      slots: o.items.reduce((acc, it) => {
+        if (it.dish.accompaniment) return acc;
+        acc[it.dish.group] = (acc[it.dish.group] ?? 0) + it.plates;
+        return acc;
+      }, {} as Record<string, number>),
       status: o.status,
       consumptionStatus: o.consumption?.status ?? null,
       hasFeedback: !!o.feedback,
@@ -408,10 +520,193 @@ export default async function orderRoutes(app: FastifyInstance) {
       // not find it anywhere: the consumption row existed, so this said false
       // and the order dropped off both the "needs close-out" list and the
       // close-out picker.
+      // A declined emergency order never became food, so there is nothing to
+      // close out. One still awaiting a decision is not the route's move either.
       needsCloseOut:
-        !o.consumption || !o.feedback || o.consumption.status === "REJECTED",
+        o.approval === "DECLINED" || o.approval === "PENDING"
+          ? false
+          : !o.consumption || !o.feedback || o.consumption.status === "REJECTED",
+      approval: o.approval,
+      declineReason: o.declineReason,
+      // Whether the Change button should appear. Worked out here rather than
+      // in the browser so the screen and the rule cannot disagree: see the
+      // conditions on PATCH /orders/:id.
+      canEdit:
+        o.status === "PLACED" &&
+        !o.consumption &&
+        (!o.isEmergency || o.approval === "PENDING") &&
+        canPlaceOrder(o.session as Sess, now, o.date, o.isEmergency, cutoff).allowed,
       bookedById: o.bookedById,
       mine: o.bookedById === me,
+      // Who actually placed it. An order a Super Admin booked on a route's
+      // behalf has to read that way everywhere it appears, or the kitchen has
+      // no idea the route's own booker never saw it.
+      placedBy: o.bookedBy ? { name: o.bookedBy.name, role: o.bookedBy.role } : null,
+      onBehalf: o.bookedBy?.role === "SUPER_ADMIN",
+    }));
+  });
+
+  /**
+   * Change an order that is already placed.
+   *
+   * The commonest complaint about this system was that a mistyped plate count
+   * could not be undone — the route had to telephone the kitchen. A booker can
+   * now correct their own order, but only while nothing has been done with it:
+   *
+   *   · it is theirs (a Super Admin may fix any)
+   *   · the ordering window for that meal is still open, so the kitchen has
+   *     not bought or prepped against the old numbers
+   *   · the kitchen has not started it — still PLACED, not preparing or later
+   *   · no close-out has begun
+   *
+   * Only the quantities change. Moving a booking to another route, day or meal
+   * is a different order, not an edit of this one, and the route's one-order
+   * -per-meal-per-day rule is what makes that distinction matter.
+   */
+  app.patch<{ Params: { id: string }; Body: { slots?: Record<string, number>; peopleCount?: number } }>(
+    "/orders/:id",
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      const id = Number(req.params.id);
+      const order = await prisma.order.findUnique({
+        where: { id },
+        include: { unit: true, consumption: true },
+      });
+      if (!order) return reply.code(404).send({ error: "Order not found." });
+
+      const me = must(req);
+      const admin = me.role === "SUPER_ADMIN";
+      if (!admin && order.bookedById !== me.userId)
+        return reply.code(403).send({ error: "That booking was placed by someone else." });
+
+      if (order.status !== "PLACED")
+        return reply.code(409).send({
+          error: `The kitchen has already started this one (${order.status.toLowerCase()}). Call them if it has to change.`,
+        });
+      if (order.consumption)
+        return reply.code(409).send({ error: "This meal is already being closed out." });
+      if (order.isEmergency && order.approval !== "PENDING")
+        return reply.code(409).send({ error: "An emergency order cannot be changed once it has been decided." });
+
+      // The same window that governs placing it governs changing it. Past the
+      // cutoff the kitchen is already working to these numbers.
+      const win = canPlaceOrder(
+        order.session as Sess, new Date(), order.date, order.isEmergency, await lunchDeadline()
+      );
+      if (!win.allowed)
+        return reply.code(422).send({ error: `Too late to change this one — ${win.reason.toLowerCase()}` });
+
+      // Headcount meals (lunch, emergency) carry a count; the rest carry the
+      // three plate counts, re-expanded through that day's menu.
+      if (order.session === "LUNCH" || order.isEmergency) {
+        const n = Number(req.body.peopleCount);
+        if (!Number.isFinite(n) || n <= 0)
+          return reply.code(422).send({ error: "Enter how many people are eating." });
+        const updated = await prisma.order.update({
+          where: { id }, data: { peopleCount: n, totalPlates: n },
+        });
+        return { ok: true, totalPlates: updated.totalPlates };
+      }
+
+      const slots = req.body.slots ?? {};
+      const expanded = await expandSlots(order.date, order.session, slots);
+      if (expanded.missing)
+        return reply.code(422).send({ error: "No menu is set for this day any more." });
+      if (expanded.totalPlates === 0)
+        return reply.code(422).send({ error: "Enter a plate count for at least one item." });
+
+      // Replaced outright rather than merged: a line the booker removed has to
+      // disappear, not linger at its old count where nobody can see it.
+      await prisma.$transaction(async (tx) => {
+        await tx.orderItem.deleteMany({ where: { orderId: id } });
+        await tx.orderItem.createMany({
+          data: expanded.items.map((it) => ({ orderId: id, dishId: it.dishId, plates: it.plates })),
+        });
+        await tx.order.update({ where: { id }, data: { totalPlates: expanded.totalPlates } });
+      });
+
+      await notifyRoles(["KITCHEN_ADMIN"], {
+        type: "ORDER_CHANGED",
+        title: "Booking changed",
+        body: `${order.unit.name} · ${SES_LABEL[order.session] ?? order.session} — now ${expanded.totalPlates} plates.`,
+        section: "orders",
+        orderId: id,
+      });
+      return { ok: true, totalPlates: expanded.totalPlates };
+    }
+  );
+
+  /**
+   * Decide an emergency order.
+   *
+   * The booking screen has always said an emergency order "needs admin
+   * approval". It did not: the order was placed and the kitchen simply saw it.
+   * This is the step that was missing. Until it is approved the order is not
+   * on the kitchen's list and not in the packing sheet, so nothing is cooked
+   * on the strength of a request nobody has agreed to.
+   */
+  app.post<{ Params: { id: string }; Body: { approve: boolean; reason?: string } }>(
+    "/orders/:id/approval",
+    { preHandler: requireRole("SUPER_ADMIN") },
+    async (req, reply) => {
+      const id = Number(req.params.id);
+      const reason = (req.body.reason ?? "").trim();
+      const order = await prisma.order.findUnique({ where: { id }, include: { unit: true } });
+      if (!order) return reply.code(404).send({ error: "Order not found." });
+      if (!order.isEmergency)
+        return reply.code(422).send({ error: "Only emergency orders need approval." });
+      if (order.approval !== "PENDING")
+        return reply.code(409).send({ error: `This one was already ${order.approval?.toLowerCase()}.` });
+      // Turning a request down without saying why leaves the route guessing,
+      // on the day something has already gone wrong for them.
+      if (!req.body.approve && reason.length < 3)
+        return reply.code(422).send({ error: "Say why it is being declined." });
+
+      const updated = await prisma.order.update({
+        where: { id },
+        data: {
+          approval: req.body.approve ? "APPROVED" : "DECLINED",
+          approvedById: must(req).userId,
+          approvedAt: new Date(),
+          declineReason: req.body.approve ? null : reason,
+        },
+      });
+
+      const where = `${order.unit.name} · ${SES_LABEL[order.session] ?? order.session}`;
+      if (order.bookedById) {
+        await notifyUsers([order.bookedById], req.body.approve
+          ? { type: "EMERGENCY_APPROVED", title: "Emergency order approved",
+              body: `${where} — the kitchen has it.`, section: "mine", orderId: id }
+          : { type: "EMERGENCY_DECLINED", title: "Emergency order declined",
+              body: `${where} — ${reason}`, section: "mine", orderId: id });
+      }
+      if (req.body.approve) {
+        await notifyRoles(["KITCHEN_ADMIN"], {
+          type: "ORDER_PLACED",
+          title: "Emergency order approved",
+          body: `${where} · ${order.peopleCount ?? 0} people — cook this.`,
+          section: "orders",
+          orderId: id,
+        });
+      }
+      return { ok: true, approval: updated.approval };
+    }
+  );
+
+  /** Emergency orders still waiting on a decision. */
+  app.get("/orders/emergency/pending", { preHandler: requireRole("SUPER_ADMIN") }, async () => {
+    const rows = await prisma.order.findMany({
+      where: { isEmergency: true, approval: "PENDING" },
+      include: { unit: true, bookedBy: { select: { name: true } } },
+      orderBy: { id: "asc" },
+    });
+    return rows.map((o) => ({
+      id: o.id,
+      unit: o.unit.name,
+      session: o.session,
+      date: o.date,
+      peopleCount: o.peopleCount,
+      requestedBy: o.bookedBy?.name ?? null,
     }));
   });
 
@@ -425,11 +720,39 @@ export default async function orderRoutes(app: FastifyInstance) {
       where: {
         date: dayRange(date),
         ...(session ? { session: session as any } : {}),
+        // An emergency order appears here only once approved. A declined or
+        // still-pending one is not something to cook.
+        OR: [{ isEmergency: false }, { approval: "APPROVED" }],
       },
-      include: { unit: true, items: { include: { dish: true } } },
+      // The kitchen cooks from this list, so it carries who placed each order:
+      // one booked by an admin on a route's behalf means that route's own
+      // booker never saw it, which is worth knowing before a query about it.
+      include: {
+        unit: true,
+        items: { include: { dish: true } },
+        bookedBy: { select: { name: true, role: true } },
+      },
       orderBy: { unitId: "asc" },
     });
   });
+
+  /**
+   * May this caller close out this order?
+   *
+   * Whoever placed it, and nobody else — bar a Super Admin, who can act on any
+   * of them because they are the one who books on a route's behalf when its
+   * booker is away, and so has to be able to finish what they started.
+   *
+   * None of the close-out routes checked this before. The picker listed every
+   * open meal in the kitchen, so any booker could enter consumption figures for
+   * a route they had never seen — and those figures are what the payment amount
+   * is calculated from.
+   */
+  function mayCloseOut(req: FastifyRequest, order: { bookedById: number | null }): boolean {
+    const me = must(req);
+    return me.role === "SUPER_ADMIN" || order.bookedById === me.userId;
+  }
+  const NOT_YOURS = "That meal was booked by someone else. You can only close out your own.";
 
   // Main items of an order (non-accompaniment) with ordered plates — for close-out.
   app.get<{ Params: { id: string } }>("/orders/:id/closeout-items", { preHandler: requireAuth }, async (req, reply) => {
@@ -443,6 +766,7 @@ export default async function orderRoutes(app: FastifyInstance) {
       },
     });
     if (!order) return reply.code(404).send({ error: "Order not found." });
+    if (!mayCloseOut(req, order)) return reply.code(403).send({ error: NOT_YOURS });
     // Anything already submitted comes back with the items, so a close-out that
     // was returned for a correction is re-opened with the previous numbers in
     // place. Retyping every line to fix one of them is how a booker ends up
@@ -508,6 +832,7 @@ export default async function orderRoutes(app: FastifyInstance) {
       include: { items: { include: { dish: true } }, unit: true },
     });
     if (!order) return reply.code(404).send({ error: "Order not found." });
+    if (!mayCloseOut(req, order)) return reply.code(403).send({ error: NOT_YOURS });
 
     // ordered comes from the order itself (main items only); leftover = ordered - consumed.
     // Consumed may legitimately exceed ordered (extra plates served) — that's fine,
@@ -568,6 +893,7 @@ export default async function orderRoutes(app: FastifyInstance) {
       include: { consumption: true, unit: true },
     });
     if (!order) return reply.code(404).send({ error: "Order not found." });
+    if (!mayCloseOut(req, order)) return reply.code(403).send({ error: NOT_YOURS });
     if (!order.consumption)
       return reply.code(409).send({ error: "Enter the consumption first." });
     if (order.consumption.status === "REJECTED")

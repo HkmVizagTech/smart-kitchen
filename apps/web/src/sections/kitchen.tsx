@@ -189,7 +189,12 @@ export function KitchenOrders({ date }: { date: string }) {
                           {o.unit.name}
                           {o.isEmergency ? <span className="pill red" style={{ marginLeft: 8 }}>emergency</span> : null}
                         </div>
-                        <div className="oplates">{o.totalPlates ?? o.peopleCount ?? 0} plates</div>
+                        <div className="oplates">
+                          {o.totalPlates ?? o.peopleCount ?? 0} plates
+                          {o.bookedBy?.role === "SUPER_ADMIN"
+                            ? ` · booked by ${o.bookedBy.name} (admin)`
+                            : ""}
+                        </div>
                       </div>
                       <span className={`badge b-${o.status}`}>{o.status}</span>
                     </div>

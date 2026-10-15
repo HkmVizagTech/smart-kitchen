@@ -84,8 +84,10 @@ function BlockedNote({ status }: { status?: MealStatus }) {
 // booker nothing about where their food was going, and when nothing was free it
 // still presented auto as an ordinary choice even though picking it guaranteed
 // a failure at the end of the form.
-function RoutePicker({ id, progress, value, onChange }: {
+function RoutePicker({ id, progress, value, onChange, requireChoice }: {
   id: string; progress?: Progress; value: string; onChange: (v: string) => void;
+  /** An admin books on a named route's behalf, so "Auto" is not offered. */
+  requireChoice?: boolean;
 }) {
   const free = progress?.units.filter((u) => !u.booked) ?? [];
   const nextFree = free[0];
@@ -99,9 +101,11 @@ function RoutePicker({ id, progress, value, onChange }: {
         disabled={nothingFree}
         onChange={(e) => onChange(e.target.value)}
       >
-        {!nothingFree && (
+        {requireChoice ? (
+          <option value="">Choose a route…</option>
+        ) : !nothingFree ? (
           <option value="">{nextFree ? `Auto — ${nextFree.name}` : "Auto — next free route"}</option>
-        )}
+        ) : null}
         {progress?.units.map((u) => (
           <option key={u.id} value={u.id} disabled={u.booked}>
             {u.name}{u.booked ? " — already booked" : ""}
@@ -127,12 +131,19 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
   user: AuthedUser; onBooked: () => void; onCloseOutNeeded?: () => void;
 }) {
   const [err, setErr] = useState("");
+  // A Super Admin books only on a route's behalf, when its own booker is away.
+  // That has to be deliberate, so the route is required rather than auto —
+  // "cover for Unit-3" is a specific request, not "whichever is free".
+  const admin = user.role === "SUPER_ADMIN";
   // The day's menu per meal — what Item 1/2/3 actually are.
   const [menus, setMenus] = useState<Record<string, DayMenu>>({});
   // A failed menu fetch used to be swallowed, leaving the card on "Loading the
   // menu…" with no end and nothing to click. The key lands here instead, so the
   // card can say what went wrong and offer to try again.
   const [menuErr, setMenuErr] = useState<Record<string, string>>({});
+  // Read rather than hardcoded: the cutoff is a setting, and a screen that
+  // states a different time from the one enforced is worse than no time at all.
+  const [lunchCut, setLunchCut] = useState("11:00");
 
   const [tOn, setTOn] = useState(true);
   const [tC, setTC] = useState<SlotCounts>({});
@@ -221,6 +232,9 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
     });
   }
   useEffect(() => {
+    api.bookingRules().then((r) => setLunchCut(r.lunchDeadline)).catch(() => {});
+  }, []);
+  useEffect(() => {
     loadMenus();
     loadProgress();
     loadGate();
@@ -257,6 +271,11 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
     if (lOn && +lPpl > 0) jobs.push({ label: "Lunch", body: { bookedById: by, date: ymd(today()), session: "LUNCH", peopleCount: +lPpl, ...pick(lUnit) } });
     if (eOn && +ePpl > 0) jobs.push({ label: "Emergency " + SES[eSes], body: { bookedById: by, date: ymd(today()), session: eSes, isEmergency: true, peopleCount: +ePpl, ...pick(eUnit) } });
     if (jobs.length === 0) { setErr("Turn on a meal and enter at least one plate count."); setBusy(false); return; }
+    if (admin && jobs.some((j) => !("unitId" in j.body))) {
+      setErr("Pick the route you are booking for — an admin booking is always on a route's behalf.");
+      setBusy(false);
+      return;
+    }
     const out: string[] = [];
     for (const j of jobs) {
       try { const r = await api.placeOrder(j.body); out.push(`✓ ${j.label} → ${r.assignedUnit} (${r.booked}/${r.total} kitchens booked)`); }
@@ -282,10 +301,24 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
       <Banner />
       <h1>New Booking</h1>
       <p className="muted">Tiffin &amp; dinner are for tomorrow — {pretty(tomorrow())}. Lunch &amp; emergency are for today.</p>
-      <p className="muted" style={{ marginTop: 4 }}>
-        Each meal goes to the next free route unless you pick one yourself.
-        Tomorrow: tiffin <b>{count(tProg)}</b>, dinner <b>{count(dProg)}</b>.
-      </p>
+      {admin ? (
+        <div className="onbehalf">
+          <i className="ti ti-user-shield" aria-hidden="true"></i>
+          <div>
+            <b>You are booking on a route's behalf</b>
+            <p>
+              Admin bookings are for covering a route whose booker is away. Choose the route on each
+              meal — there is no auto-assign here. It will show as placed by you everywhere, and you
+              are the one who closes it out afterwards.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <p className="muted" style={{ marginTop: 4 }}>
+          Each meal goes to the next free route unless you pick one yourself.
+          Tomorrow: tiffin <b>{count(tProg)}</b>, dinner <b>{count(dProg)}</b>.
+        </p>
+      )}
       {err && Object.keys(menus).length === 0 && <p className="err">{err}</p>}
 
       <GateBanner gate={gate} onCloseOutNeeded={onCloseOutNeeded} />
@@ -294,24 +327,26 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
       <div className="grid2">
         <MealCard title="Morning Tiffin" on={tOn} setOn={setTOn} menu={tMenu} counts={tC} setCounts={setTC} total={tTotal}
           id="tiffin" progress={tProg} unit={tUnit} setUnit={setTUnit} blocked={gate?.BREAKFAST}
-          past={pastFor("BREAKFAST")} menuError={tErr} retryMenu={loadMenus} />
+          past={pastFor("BREAKFAST")} menuError={tErr} retryMenu={loadMenus} requireRoute={admin} />
         <MealCard title="Dinner" on={dOn} setOn={setDOn} menu={dMenu} counts={dC} setCounts={setDC} total={dTotal}
           id="dinner" progress={dProg} unit={dUnit} setUnit={setDUnit} blocked={gate?.DINNER}
-          past={pastFor("DINNER")} menuError={dErr} retryMenu={loadMenus} />
+          past={pastFor("DINNER")} menuError={dErr} retryMenu={loadMenus} requireRoute={admin} />
       </div>
 
       <h2>Today (count only)</h2>
       <div className="grid2">
         <div className={`meal ${lOn ? "on" : ""}`}>
           <div className="head"><span className="mtitle">Lunch</span><Switch on={lOn} setOn={setLOn} /></div>
-          <p className="muted" style={{ margin: "6px 0 0" }}>Same-day · before 11:00 AM · headcount only</p>
+          <p className="muted" style={{ margin: "6px 0 0" }}>Same-day · before {lunchCut} · headcount only</p>
           <LunchMenu menu={lMenu} error={lErr} retry={loadMenus} />
           <BlockedNote status={gate?.LUNCH} />
-          {lOn && <><RoutePicker id="lunch" progress={lProg} value={lUnit} onChange={setLUnit} /><Ppl value={lPpl} set={setLPpl} /></>}
+          {lOn && <><RoutePicker id="lunch" progress={lProg} value={lUnit} onChange={setLUnit} requireChoice={admin} /><Ppl value={lPpl} set={setLPpl} /></>}
         </div>
         <div className={`meal ${eOn ? "on" : ""}`}>
           <div className="head"><span className="mtitle">Emergency</span><Switch on={eOn} setOn={setEOn} /></div>
-          <p className="muted" style={{ margin: "6px 0 0" }}>Count only · needs admin approval</p>
+          <p className="muted" style={{ margin: "6px 0 0" }}>
+            Count only · an admin must approve it before the kitchen cooks it
+          </p>
           {eOn && (
             <>
               <label className="lab" style={{ marginTop: 10 }}>For which meal</label>
@@ -320,7 +355,7 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
                 <option value="LUNCH">Lunch</option>
                 <option value="DINNER">Dinner</option>
               </select>
-              <RoutePicker id="emergency" progress={eProg} value={eUnit} onChange={setEUnit} />
+              <RoutePicker id="emergency" progress={eProg} value={eUnit} onChange={setEUnit} requireChoice={admin} />
               <Ppl value={ePpl} set={setEPpl} />
             </>
           )}
@@ -372,12 +407,14 @@ const perPlate = (d: MenuDish) => (d.unit === "NOS" ? `${d.qtyPerPlate} nos` : `
  * route, and the menu for that date decides what they are. So the form names
  * the dishes and asks only "how many plates".
  */
-function MealCard({ title, on, setOn, menu, menuError, retryMenu, counts, setCounts, total, id, progress, unit, setUnit, blocked, past }: {
+function MealCard({ title, on, setOn, menu, menuError, retryMenu, counts, setCounts, total, id, progress, unit, setUnit, blocked, past, requireRoute }: {
   title: string; on: boolean; setOn: (b: boolean) => void; menu: DayMenu | null;
   /** Set when the menu could not be fetched, so the card says so instead of
    *  claiming to still be loading. */
   menuError?: string | null;
   retryMenu?: () => void;
+  /** True for an admin: the route must be named, never auto-assigned. */
+  requireRoute?: boolean;
   counts: SlotCounts; setCounts: (c: SlotCounts) => void; total: number;
   id: string; progress?: Progress; unit: string; setUnit: (v: string) => void;
   blocked?: MealStatus;
@@ -403,7 +440,7 @@ function MealCard({ title, on, setOn, menu, menuError, retryMenu, counts, setCou
       <BlockedNote status={blocked} />
       {!on && <p className="muted" style={{ margin: "6px 0 0" }}>Turn on to enter plate counts.</p>}
 
-      {on && <RoutePicker id={id} progress={progress} value={unit} onChange={setUnit} />}
+      {on && <RoutePicker id={id} progress={progress} value={unit} onChange={setUnit} requireChoice={requireRoute} />}
       {on && !menu && !menuError && <p className="muted" style={{ marginTop: 8 }}>Loading the menu…</p>}
       {on && !menu && menuError && <MenuFailed message={menuError} retry={retryMenu} />}
       {on && menu && slots.length === 0 && (
@@ -556,31 +593,121 @@ function Ppl({ value, set }: { value: string; set: (s: string) => void }) {
   );
 }
 
+/**
+ * Change the quantities on an order already placed.
+ *
+ * Until now a mistyped plate count meant telephoning the kitchen. The same
+ * three numbers as the booking screen, prefilled from what was ordered; the
+ * API decides whether it is still allowed and says why if not.
+ */
+function EditOrder({ booking, menu, onDone, onCancel }: {
+  booking: Booking; menu: DayMenu | null; onDone: () => void; onCancel: () => void;
+}) {
+  const headcount = booking.session === "LUNCH" || booking.isEmergency;
+  const [counts, setCounts] = useState<SlotCounts>(booking.slots ?? {});
+  const [ppl, setPpl] = useState(String(booking.peopleCount ?? ""));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const slots = (menu?.slots ?? []).filter((s) => s.group);
+  const total = Object.values(counts).reduce((a, n) => a + (Number(n) || 0), 0);
+
+  async function save() {
+    setBusy(true); setErr("");
+    try {
+      await api.editOrder(booking.id, headcount ? { peopleCount: Number(ppl) || 0 } : { slots: counts });
+      onDone();
+    } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="card soft" style={{ marginTop: 10 }}>
+      <div className="section-title">Change this booking</div>
+      {headcount ? (
+        <>
+          <p className="muted" style={{ margin: "4px 0 0" }}>How many people are eating?</p>
+          <Ppl value={ppl} set={setPpl} />
+        </>
+      ) : slots.length === 0 ? (
+        <p className="muted" style={{ marginTop: 6 }}>Loading the menu…</p>
+      ) : (
+        <>
+          <p className="muted" style={{ margin: "4px 0 8px" }}>
+            Was {booking.totalPlates ?? 0} plates. Enter the new counts.
+          </p>
+          <div className="slots">
+            {slots.map((slot) => {
+              const val = counts[slot.group as "ITEM1"] ?? 0;
+              const step = (d: number) =>
+                setCounts({ ...counts, [slot.group!]: Math.max(0, val + d) });
+              return (
+                <div className="slot" key={slot.group}>
+                  <div className="slot-info">
+                    <div className="slot-tag">{GROUP_LABEL[slot.group!]}</div>
+                    <div className="slot-dish">{slot.dish.name}</div>
+                  </div>
+                  <div className={`stepper ${val > 0 ? "filled" : ""}`}>
+                    <button type="button" aria-label={`Decrease ${slot.dish.name}`}
+                      disabled={val === 0} onClick={() => step(-1)}>−</button>
+                    <input inputMode="numeric" value={val || ""} placeholder="0"
+                      onChange={(e) =>
+                        setCounts({ ...counts, [slot.group!]: Number(e.target.value.replace(/[^0-9]/g, "")) || 0 })} />
+                    <button type="button" aria-label={`Increase ${slot.dish.name}`} onClick={() => step(+1)}>+</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="between" style={{ marginTop: 10, fontWeight: 800 }}>
+            <span>New total</span><span>{total} plates</span>
+          </div>
+        </>
+      )}
+      {err && <div className="err">{err}</div>}
+      <div className="row" style={{ gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
+        <button className="btn ghost sm" onClick={onCancel}>Cancel</button>
+        <button className="btn sm" disabled={busy} onClick={save}>
+          {busy ? "Saving…" : "Save changes"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ---------------- MY BOOKINGS ----------------
-export function MyBookings({ onCloseOut }: { user: AuthedUser; onCloseOut: (b: Booking) => void }) {
+export function MyBookings({ user, onCloseOut }: { user: AuthedUser; onCloseOut: (b: Booking) => void }) {
   const [all, setAll] = useState<Booking[] | null>(null);
   const [err, setErr] = useState("");
-  // The route returns every booker's orders. This screen is called "My
-  // Bookings", so it defaults to the caller's own — but the whole list stays
-  // one tap away, because seeing what the other routes ordered is useful.
-  const [scope, setScope] = useState<"mine" | "all">("mine");
-  useEffect(() => { api.recentBookings().then(setAll).catch((e) => setErr(e.message)); }, []);
+  // The API now returns a booker only their own orders, so there is nothing
+  // left to filter and no "all routes" tab: the list used to show every
+  // booker's order to everyone, which is why one booking appeared on every
+  // screen at once. An admin still gets the whole kitchen, because they book
+  // on a route's behalf and have to see it afterwards.
+  const admin = user.role === "SUPER_ADMIN";
+  // Which order is open for editing, and that day's menu so the editor can
+  // name the three items rather than showing bare boxes.
+  const [editing, setEditing] = useState<Booking | null>(null);
+  const [editMenu, setEditMenu] = useState<DayMenu | null>(null);
+  const reload = () => api.recentBookings().then(setAll).catch((e) => setErr(e.message));
+  useEffect(() => { reload(); }, []);
+  useEffect(() => {
+    if (!editing || editing.session === "LUNCH" || editing.isEmergency) { setEditMenu(null); return; }
+    api.menu(editing.date.slice(0, 10), editing.session).then(setEditMenu).catch(() => setEditMenu(null));
+  }, [editing?.id]);
   if (err) return <p className="err">{err}</p>;
   if (!all) return <p className="muted">Loading…</p>;
-  const list = scope === "mine" ? all.filter((b) => b.mine) : all;
-  const mineCount = all.filter((b) => b.mine).length;
+  const list = all;
   const need = list.filter((b) => b.needsCloseOut && b.status !== "CLOSED");
   const itemSummary = (b: Booking) =>
     b.items.length ? b.items.map((it) => `${it.dish}×${it.plates}`).join(", ") : `${b.peopleCount ?? 0} people`;
   return (
     <>
-      <h1>Bookings</h1>
-      <div className="segmented" role="tablist" aria-label="Whose bookings" style={{ marginBottom: 14 }}>
-        <button role="tab" aria-selected={scope === "mine"} className={scope === "mine" ? "on" : ""}
-          onClick={() => setScope("mine")}>Mine ({mineCount})</button>
-        <button role="tab" aria-selected={scope === "all"} className={scope === "all" ? "on" : ""}
-          onClick={() => setScope("all")}>All routes ({all.length})</button>
-      </div>
+      <h1>{admin ? "All bookings" : "My bookings"}</h1>
+      {admin && (
+        <p className="muted" style={{ marginTop: -6 }}>
+          Every route's orders. A booker sees only their own.
+        </p>
+      )}
       {need.length > 0 && (
         <>
           <h2>Needs your attention</h2>
@@ -607,10 +734,10 @@ export function MyBookings({ onCloseOut }: { user: AuthedUser; onCloseOut: (b: B
           })}
         </>
       )}
-      <h2>All bookings</h2>
+      <h2>{admin ? "Every route" : "Everything you have booked"}</h2>
       {list.length === 0 && (
         <div className="card">
-          <p className="muted">{scope === "mine" ? "You haven't booked anything yet." : "No bookings yet."}</p>
+          <p className="muted">{admin ? "No bookings yet." : "You haven't booked anything yet."}</p>
         </div>
       )}
       {list.map((b) => (
@@ -619,9 +746,37 @@ export function MyBookings({ onCloseOut }: { user: AuthedUser; onCloseOut: (b: B
             <b>{b.unit} · {SES[b.session]}{b.isEmergency ? " · emergency" : ""}</b>
             <span className={`badge b-${b.status}`}>{b.status}</span>
           </div>
-          <div className="muted" style={{ marginTop: 4 }}>{new Date(b.date).toDateString()} · {b.totalPlates ?? b.peopleCount ?? 0} plates</div>
+          <div className="between" style={{ marginTop: 4, alignItems: "flex-start" }}>
+            <div className="muted">
+              {new Date(b.date).toDateString()} · {b.totalPlates ?? b.peopleCount ?? 0} plates
+              {b.placedBy && (admin || b.onBehalf) ? ` · placed by ${b.placedBy.name}${b.onBehalf ? " (admin)" : ""}` : ""}
+            </div>
+            {b.canEdit && editing?.id !== b.id && (
+              <button className="btn ghost sm" onClick={() => setEditing(b)}>
+                <i className="ti ti-pencil" aria-hidden="true"></i> Change
+              </button>
+            )}
+          </div>
+          {editing?.id === b.id && (
+            <EditOrder
+              booking={b}
+              menu={editMenu}
+              onCancel={() => setEditing(null)}
+              onDone={() => { setEditing(null); reload(); }}
+            />
+          )}
           <div style={{ marginTop: 6, fontSize: 14 }}>{itemSummary(b)}</div>
-          {b.consumptionStatus === "REJECTED" ? (
+          {b.approval === "PENDING" ? (
+            <div className="muted" style={{ marginTop: 6 }}>
+              <i className="ti ti-clock" aria-hidden="true"></i>{" "}
+              Emergency order — waiting for an admin to approve it.
+            </div>
+          ) : b.approval === "DECLINED" ? (
+            <div className="returned-why" style={{ marginTop: 8 }}>
+              <i className="ti ti-x" aria-hidden="true"></i>
+              <span><b>Declined:</b> {b.declineReason || "no reason given"}</span>
+            </div>
+          ) : b.consumptionStatus === "REJECTED" ? (
             <div className="returned-why" style={{ marginTop: 8 }}>
               <i className="ti ti-arrow-back-up" aria-hidden="true"></i>
               <span><b>Sent back:</b> {b.rejectionReason || "no reason given"}</span>

@@ -14,19 +14,37 @@ let pass = 0, fail = 0;
 const ck = (ok, l) => { ok ? (pass++, console.log('PASS ', l)) : (fail++, console.log('FAIL ', l)); };
 
 async function login(u) {
-  const r = await fetch(`${API}/auth/login`, { method:'POST', headers:{'content-type':'application/json'},
-    body: JSON.stringify({ identifier:u, password:PASSWORD }) });
-  return (await r.json()).token;
+  for (let i = 0; i < 6; i++) {
+    const r = await fetch(`${API}/auth/login`, { method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({ identifier:u, password:PASSWORD }) });
+    const d = await r.json().catch(()=>({}));
+    if (r.ok && d.token) return d.token;
+    if (r.status !== 429) throw new Error(`login ${u}: ${r.status} ${d.error ?? ''}`);
+    const w = Number(String(d.error??'').match(/(\d+) second/)?.[1] ?? 10) + 1;
+    console.log(`      (rate limited, waiting ${w}s)`);
+    await new Promise(res=>setTimeout(res, w*1000));
+  }
+  throw new Error(`login ${u}: still rate limited`);
 }
 const call = (tok, path, opts={}) => fetch(API+path, { ...opts,
   headers: { 'content-type':'application/json', authorization:`Bearer ${tok}`, ...(opts.headers||{}) } });
 
 const bk = await login('booking'), vf = await login('verify');
 
-// the order placed earlier in this session
+// Book the meal this suite then walks through. Seeded here rather than
+// assumed, so the suite cannot quietly pass on an empty database.
+const TOM = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
+{
+  const menu = await (await call(bk, `/menu?date=${TOM}&session=BREAKFAST`)).json();
+  const slots = {};
+  (menu.slots || []).forEach((x) => { if (x.group) slots[x.group] = 60; });
+  await call(bk, '/orders', { method:'POST',
+    body: JSON.stringify({ date: TOM, session:'BREAKFAST', slots }) });
+}
 let r = await (await call(bk, '/bookings/recent')).json();
 const order = r.find(o => o.needsCloseOut);
-console.log('order', order.id, order.unit, order.session, 'stage-ish', order.consumptionStatus);
+if (!order) { console.log('FAIL  no open order to close out'); process.exit(1); }
+console.log('order', order.id, order.unit, order.session);
 
 // 1. can this route book again? no.
 let st = await (await call(bk, '/me/booking-status')).json();
