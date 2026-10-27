@@ -17,6 +17,7 @@ export default function Auth({ onAuthed }: { onAuthed: (u: AuthedUser) => void }
 
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
+  const [showPw, setShowPw] = useState(false);
 
   const [f, setF] = useState({
     name: "", username: "", password: "", phone: "", email: "",
@@ -62,18 +63,22 @@ export default function Auth({ onAuthed }: { onAuthed: (u: AuthedUser) => void }
           <button id="tab-signin" className={mode === "signin" ? "on" : ""}
             onClick={() => { setMode("signin"); setError(""); }}>Sign in</button>
           <button id="tab-signup" className={mode === "signup" ? "on" : ""}
-            onClick={() => { setMode("signup"); setError(""); }}>Create booking account</button>
+            onClick={() => { setMode("signup"); setError(""); }}>Create account</button>
         </div>
 
         {mode === "signin" ? (
           <div className="auth-form">
             <label className="lab" htmlFor="identifier">Username, email or phone</label>
             <input id="identifier" value={identifier} onChange={(e) => setIdentifier(e.target.value)}
-              placeholder="your login" autoComplete="username" />
+              placeholder="your login" autoComplete="username" autoCapitalize="none" autoFocus />
             <label className="lab" htmlFor="password" style={{ marginTop: 12 }}>Password</label>
-            <input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-              placeholder="password" autoComplete="current-password"
-              onKeyDown={(e) => e.key === "Enter" && password && identifier && signin()} />
+            <div className="pw-wrap">
+              <input id="password" type={showPw ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)}
+                placeholder="password" autoComplete="current-password"
+                onKeyDown={(e) => e.key === "Enter" && password && identifier && signin()} />
+              <button type="button" className="pw-toggle" onClick={() => setShowPw((v) => !v)}
+                aria-label={showPw ? "Hide password" : "Show password"}>{showPw ? "Hide" : "Show"}</button>
+            </div>
             <button className="btn block" style={{ marginTop: 16 }}
               disabled={busy || !identifier || !password} onClick={signin}>
               {busy ? "Signing in…" : "Sign in"}

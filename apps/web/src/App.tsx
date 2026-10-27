@@ -11,7 +11,7 @@ import { AuthedUser, Booking, NotifSummary, api, clearToken, getToken } from "./
 import { groupsFor, landingFor, NAV, ROLE_LABEL } from "./nav";
 import { LogoMark } from "./Logo";
 import { NotificationBell } from "./Notifications";
-import { ToastHost } from "./ui";
+import { ToastHost, useStackedTables } from "./ui";
 import { tomorrow, ymd } from "./util";
 import Auth from "./Auth";
 import { SectionErrorBoundary } from "./ErrorBoundary";
@@ -21,6 +21,7 @@ const initials = (name: string) =>
   name.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || "?";
 
 export default function App() {
+  useStackedTables();
   const [me, setMe] = useState<AuthedUser | null>(null);
   const [ready, setReady] = useState(false);
   const [section, setSection] = useState<string>("");

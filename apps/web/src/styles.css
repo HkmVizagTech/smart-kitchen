@@ -517,7 +517,7 @@ tr.totalrow td { border-top: 2px solid var(--border-2); }
   background: rgba(17, 45, 78, .42); backdrop-filter: blur(3px); padding: 20px; animation: fade .18s ease;
 }
 .modal {
-  background: #fff; border-radius: var(--radius-xl); width: 480px; max-width: 100%;
+  background: #fff; border-radius: var(--radius-xl); width: var(--mw, 480px); max-width: 100%;
   max-height: 92vh; overflow: hidden; display: flex; flex-direction: column;
   box-shadow: var(--shadow-lg); animation: pop .22s var(--ease);
 }
@@ -1045,3 +1045,304 @@ tr.totalrow td { border-top: 2px solid var(--border-2); }
 .copyfrom span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .copyfrom b { font-size: 14px; color: var(--ink); }
 .copyfrom small { font-size: 12.5px; color: var(--text-2); }
+
+
+/* ============================================================
+   Phone-first polish layer
+
+   Almost everyone uses this on a phone, so this block is written phone-first
+   and only the desktop tweaks are conditional. It sits last on purpose: it
+   refines the rules above rather than replacing them.
+   ============================================================ */
+
+/* iOS zooms the page when you focus an input under 16px, and then never zooms
+   back out. 16px on touch screens avoids it; tap targets get a 44px floor. */
+@media (max-width: 860px) {
+  select, input, textarea { font-size: 16px; min-height: 46px; }
+  textarea { min-height: 84px; }
+  button.btn, a.btn { min-height: 46px; font-size: 15px; }
+  button.btn.sm, button.btn.small { min-height: 38px; }
+  html { -webkit-tap-highlight-color: transparent; }
+  button, .item, .segmented button { touch-action: manipulation; }
+}
+
+/* ---- navbar: frosted, stays readable over scrolling content ---- */
+.navbar { backdrop-filter: saturate(1.4) blur(10px); background: rgba(255, 255, 255, .92); padding-top: env(safe-area-inset-top, 0px); height: calc(66px + env(safe-area-inset-top, 0px)); }
+@media (max-width: 600px) { .navbar { height: calc(58px + env(safe-area-inset-top, 0px)); } }
+
+/* ---- page headings: tighter, with the subtitle clearly subordinate ---- */
+h1 + .muted, h1 + p.muted { margin: 0 0 16px; font-size: 13.5px; line-height: 1.5; }
+@media (max-width: 860px) {
+  h1 { font-size: 24px; line-height: 1.2; margin-bottom: 10px; }
+  h2 { font-size: 15px; margin: 18px 0 10px; }
+  .main { padding: 16px 14px; }
+  .card { padding: 16px; border-radius: 16px; }
+}
+
+/* ---- stat tiles: two per row on a phone, not one tall slab each ---- */
+@media (max-width: 640px) {
+  .stats-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .stat { padding: 14px 14px 14px 18px; }
+  .stat .l { font-size: 10.5px; }
+  .stat .n { font-size: 26px; }
+  .stat .s { font-size: 11.5px; }
+}
+
+/* ---- date range: two equal labelled fields instead of a ragged wrap ---- */
+.daterange { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; max-width: 460px; }
+.daterange label { display: block; }
+.daterange input { width: 100%; }
+
+/* ---- segmented controls: fill the row and scroll if they must ---- */
+@media (max-width: 860px) {
+  .segmented { display: flex; }
+  .segmented button { flex: 1 0 auto; padding: 10px 14px; font-size: 13.5px; }
+}
+
+/* ---- the cooking-date bar ---- */
+.toolbar input[type="date"] { min-width: 0; }
+@media (max-width: 640px) {
+  .toolbar { background: #fff; border: 1px solid var(--border-2); border-radius: var(--radius); padding: 8px 12px; box-shadow: var(--shadow-xs); }
+  .toolbar .muted { font-weight: 700; }
+  .toolbar input[type="date"] { flex: 1; width: auto !important; border: none; box-shadow: none; padding-left: 0; text-align: right; }
+}
+
+/* ---- bottom tab bar: bigger, calmer, active state you can see ---- */
+@media (max-width: 860px) {
+  .sidebar:not(.drawer) .item { font-size: 11px; position: relative; }
+  .sidebar:not(.drawer) .item.active { background: var(--primary-soft); color: var(--primary-dark); }
+  .sidebar:not(.drawer) .item.active i { transform: translateY(-1px); }
+  .sidebar:not(.drawer) .item:active { transform: scale(.96); }
+}
+
+/* ---- drawer: a header and clearer groups ---- */
+@media (max-width: 860px) {
+  .sidebar.drawer { padding-top: calc(14px + env(safe-area-inset-top, 0px)); }
+  .sidebar.drawer .item { padding: 13px 14px; font-size: 15px; }
+  .sidebar.drawer .item i { font-size: 21px; }
+  .sidebar.drawer .item.active::before { left: -12px; }
+}
+
+/* ---- modal: a bottom sheet on phones ----
+   Centred dialogs float in the middle of a tall screen, far from the thumb,
+   and their small × is a stretch to hit. A sheet rises from the bottom,
+   its primary button sits where the thumb already is, and it can be closed by
+   tapping the dimmed area above it. */
+.modal-grab { display: none; }
+.modal .x { width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; margin: -4px -6px 0 0; }
+.modal .x i { font-size: 20px; }
+@keyframes sheet-up { from { transform: translateY(100%); } }
+@media (max-width: 640px) {
+  .modal-overlay { align-items: flex-end; padding: 0; }
+  .modal {
+    width: 100% !important; max-width: 100%; max-height: 92dvh;
+    border-radius: 22px 22px 0 0; animation: sheet-up .28s var(--ease);
+  }
+  .modal-grab { display: block; width: 40px; height: 4px; border-radius: 4px; background: var(--border-2); margin: 9px auto 0; flex-shrink: 0; }
+  .modal-head { padding: 12px 18px 12px; }
+  .modal-body { padding: 16px 18px; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+  .modal-foot {
+    padding: 12px 18px calc(14px + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid var(--border); background: #fff;
+    flex-direction: column-reverse; gap: 8px;
+  }
+  .modal-foot .btn, .modal-foot button { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) { .modal, .modal-overlay { animation: none; } }
+
+/* ---- stacked tables ----
+   At phone width each row becomes a card, and each cell says what it is. The
+   first cell is the card's title. Header row is hidden (the labels moved onto
+   the cells — see useStackedTables). */
+@media (max-width: 640px) {
+  .tablewrap:not(.nostack) { border: none; box-shadow: none; background: none; overflow: visible; }
+  table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: 100%; }
+  table.stack thead { display: none; }
+  /* a card per row: the first cell is its title, the rest sit two across with
+     the label above the value, which is half the height of label-left/value-right */
+  table.stack tbody tr {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px;
+    background: #fff; border: 1px solid var(--border-2); border-radius: 14px;
+    padding: 12px 14px; margin-bottom: 10px; box-shadow: var(--shadow-xs);
+  }
+  table.stack tbody tr:hover { background: #fff; }
+  table.stack td {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+    padding: 8px 0; border-bottom: none; white-space: normal;
+    text-align: left; font-size: 14px; min-width: 0; overflow-wrap: anywhere;
+  }
+  table.stack td::before {
+    content: attr(data-label);
+    font-size: 10.5px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; color: var(--muted);
+  }
+  table.stack td:first-child {
+    grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: flex-start;
+    font-weight: 800; font-size: 15.5px; padding: 0 0 10px; margin-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  table.stack td:first-child::before { display: none; }
+  /* wide cells (actions, long text) take the full row */
+  table.stack td:last-child:nth-child(even) { grid-column: 1 / -1; }
+  table.stack td[colspan] { grid-column: 1 / -1; align-items: center; text-align: center; }
+  table.stack td[colspan]::before { display: none; }
+  table.stack td[colspan]:first-child { font-weight: 500; font-size: 14px; color: var(--muted); border-bottom: none; margin: 0; padding: 6px 0; }
+  table.stack td:empty { display: none; }
+
+  /* verification close-out lines: name on top, figures beneath, never wrapped mid-phrase */
+  .vline, .vtotal { flex-wrap: wrap; row-gap: 2px; }
+  .vline .vv, .vtotal > :last-child { flex-basis: 100%; font-size: 13.5px; }
+  .vtotal { font-size: 15px; }
+
+  /* kitchen "move all to": three across, not three full-width slabs */
+  .bulk-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); gap: 8px; width: 100%; }
+  .bulk-actions .btn { padding-left: 6px; padding-right: 6px; font-size: 13.5px; }
+}
+
+/* ---- login: calmer, roomier, and a password peek ---- */
+.auth { padding: calc(24px + env(safe-area-inset-top, 0px)) 16px calc(24px + env(safe-area-inset-bottom, 0px)); }
+.auth-emblem { width: 84px; height: 84px; padding: 14px; background: #fff; border-radius: 26px; box-shadow: var(--shadow-md); display: flex; align-items: center; justify-content: center; }
+.auth-brand { font-size: 30px; }
+.auth-card { padding: 26px; border: 1px solid rgba(255, 255, 255, .7); }
+.auth-tabs button { white-space: nowrap; }
+.pw-wrap { position: relative; }
+.pw-wrap input { padding-right: 70px; }
+.pw-toggle {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  border: none; background: none; cursor: pointer; padding: 8px 10px; border-radius: 9px;
+  font-weight: 750; font-size: 13px; color: var(--primary-dark);
+}
+.pw-toggle:hover { background: var(--primary-soft); }
+.auth-form .btn.block { margin-top: 18px; }
+.auth-card .err { background: var(--danger-soft); border: 1px solid #ecc6c1; border-radius: var(--radius); padding: 10px 12px; font-size: 13.5px; text-align: center; }
+@media (max-width: 520px) {
+  .auth { justify-content: flex-start; padding-top: calc(8vh + env(safe-area-inset-top, 0px)); }
+  .auth-card { width: 100%; max-width: 100%; padding: 20px; border-radius: 24px; }
+}
+
+/* ---- toasts clear the tab bar ---- */
+@media (max-width: 860px) {
+  .toasts { bottom: calc(var(--tabbar-h) + 14px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* ---- keyboard focus you can actually see ---- */
+.item:focus-visible, button:focus-visible, a:focus-visible { outline: 3px solid rgba(63, 114, 175, .45); outline-offset: 2px; }
+
+
+/* ============================================================
+   Design refresh — legibility first
+
+   The page was #DBE2EF with muted text #5A6F8D on it: about 4:1, which is
+   below the 4.5:1 floor for body text and is why captions, subtitles and
+   labels were hard to read. The page is now a much lighter cool grey, and
+   every grey text colour is darkened to clear 7:1 on both the page and on
+   white cards. Type is self-hosted Inter so it looks the same on every phone.
+   ============================================================ */
+:root {
+  --bg: #f1f4f9;
+  --surface: #e3e9f3;
+  --surface-soft: #f5f8fc;
+  --border: #e6ebf3;
+  --border-2: #d3dbe8;
+
+  --ink: #0e2a4a;
+  --text: #14294a;
+  --text-2: #324a6b;
+  --muted: #44587a;          /* >= 7:1 on #f1f4f9 and on white */
+
+  --primary-soft: #e8f0fa;
+  --shadow-sm: 0 1px 2px rgba(14, 42, 74, .05), 0 4px 14px -6px rgba(14, 42, 74, .10);
+  --shadow-md: 0 2px 4px rgba(14, 42, 74, .05), 0 12px 28px -10px rgba(14, 42, 74, .18);
+}
+body {
+  font-family: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  background: var(--bg); font-feature-settings: "cv11", "ss01", "tnum" 0;
+  font-size: 15px; line-height: 1.5;
+}
+.muted { font-size: 14px; color: var(--muted); }
+.cap, .lab, label.f { color: var(--muted); }
+.lab { font-size: 11.5px; }
+.stat .l, .stat .s, .slot-with, .slot-qty, .ocard .oplates, .cb-sum { color: var(--muted); }
+.stat .s, .slot-with { font-size: 13px; }
+input::placeholder, textarea::placeholder { color: #6b7d99; opacity: 1; }
+
+/* layout: stop a wide child (the packing sheet) pushing the card off-screen */
+.shell, .main { min-width: 0; }
+.main { max-width: 1120px; }
+
+/* headings */
+h1 { font-weight: 800; letter-spacing: -.6px; color: var(--ink); font-size: 28px; }
+h1 + .muted, h1 + p.muted { font-size: 14.5px; margin-bottom: 20px; }
+h2 { font-weight: 750; font-size: 17px; color: var(--ink); }
+
+/* cards: white on a light page, separated by a hairline and a soft shadow */
+.card, .stat, .meal { border: 1px solid rgba(14, 42, 74, .07); box-shadow: var(--shadow-sm); }
+.card { border-radius: 18px; padding: 22px; }
+.card.soft { background: var(--primary-soft); border-color: #d3e2f4; }
+.meal { background: #fff; border-radius: 18px; }
+.stat { border-radius: 16px; }
+.stat::before { width: 4px; background: var(--primary); }
+
+/* hero banner: calmer, no heavy navy slab */
+.banner { background: linear-gradient(120deg, #3f72af 0%, #5b8cc6 100%); border-radius: 20px; padding: 26px 28px; box-shadow: var(--shadow-md); }
+.banner h1 { font-size: 26px; color: #fff; }
+.banner p { color: rgba(255, 255, 255, .95); font-size: 15px; }
+
+/* top bar + sidebar */
+.navbar { background: rgba(255, 255, 255, .94); border-bottom: 1px solid var(--border-2); }
+.sidebar { background: #fff; border-right: 1px solid var(--border-2); }
+.sidebar .item { color: var(--text-2); font-size: 14.5px; font-weight: 600; }
+.sidebar .item i { color: #5c7195; }
+.sidebar .item:hover { background: var(--surface-soft); }
+.sidebar .item.active { background: var(--primary-soft); color: var(--primary-dark); box-shadow: none; }
+.sidebar .secthead { color: #4f6486; font-size: 11px; }
+.uchip { background: var(--surface-soft); }
+.urole, .navbar .sub { color: var(--muted); }
+
+/* inputs */
+select, input, textarea { background: #fff; border: 1px solid #c9d3e3; color: var(--ink); }
+select:hover, input:hover, textarea:hover { border-color: #aebbd1; }
+
+/* buttons: confident primary, quiet secondary */
+button.btn, a.btn { border-radius: 12px; font-weight: 700; letter-spacing: .1px; }
+button.btn.ghost, a.btn.ghost { color: var(--ink); border: 1px solid #c9d3e3; background: #fff; }
+
+/* tables: light header, clear rows */
+thead th { background: var(--surface-soft); color: var(--text-2); border-bottom: 1px solid var(--border-2); }
+.tablewrap { border-radius: 14px; border-color: var(--border-2); }
+th { font-size: 11.5px; color: var(--text-2); }
+td { color: var(--text); }
+tbody tr:hover { background: #f7faff; }
+
+/* badges: stronger text colour for contrast */
+.pill, .badge { font-weight: 750; }
+.pill.gray { background: var(--surface); color: var(--text); }
+
+/* segmented controls */
+.segmented { background: var(--surface-soft); border-color: var(--border-2); border-radius: 12px; }
+.segmented button { color: var(--text-2); }
+.segmented button.on { background: #fff; color: var(--primary-dark); box-shadow: var(--shadow-sm); }
+
+/* toolbar + notes */
+.toolbar .muted, .toolbar label { color: var(--text-2); font-weight: 600; }
+.note { color: #5b4208; }
+.locked { color: var(--text); }
+
+/* sign-in */
+.auth { background: radial-gradient(900px 520px at 50% -10%, #dbe6f6 0%, transparent 65%), var(--bg); }
+.auth-sub { color: var(--text-2); font-size: 14.5px; }
+.auth-card { box-shadow: var(--shadow-md); border: 1px solid var(--border-2); }
+.auth-tabs button { color: var(--text-2); }
+
+/* mobile tab bar labels were 10.5px grey */
+@media (max-width: 860px) {
+  .sidebar:not(.drawer) .item { color: var(--text-2); font-size: 11.5px; }
+  .main { padding: 18px 14px; }
+  h1 { font-size: 25px; }
+  table.stack td::before { color: var(--muted); }
+}
+
+/* the sticky confirm bar floats above the page instead of looking glued on */
+.confirm-bar { background: rgba(255, 255, 255, .96); backdrop-filter: blur(8px); border-top: 1px solid var(--border-2); box-shadow: 0 -8px 24px -12px rgba(14, 42, 74, .2); }
+
+/* scrollbars */
+* { scrollbar-width: thin; scrollbar-color: #b9c5d8 transparent; }

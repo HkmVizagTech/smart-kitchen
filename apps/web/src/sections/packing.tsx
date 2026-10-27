@@ -122,7 +122,7 @@ export default function Packing({ date, setDate }: { date: string; setDate?: (d:
 
       {sheet && sheet.rows.length === 0 && <p className="muted">No orders for this session.</p>}
       {sheet && sheet.rows.length > 0 && (
-        <div className="tablewrap" style={{ marginTop: 12 }}>
+        <div className="tablewrap nostack" style={{ marginTop: 12 }}>
           <table>
             <thead>
               <tr>

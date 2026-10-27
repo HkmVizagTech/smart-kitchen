@@ -762,11 +762,11 @@ export function Reports() {
   return (
     <div>
       <h1>Reports &amp; Analytics</h1>
-      <div className="toolbar">
-        <span className="muted">From</span>
-        <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} style={{ width: "auto" }} />
-        <span className="muted">To</span>
-        <input type="date" value={to} onChange={(e) => setTo(e.target.value)} style={{ width: "auto" }} />
+      <div className="daterange">
+        <label><span className="lab">From</span>
+          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
+        <label><span className="lab">To</span>
+          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></label>
       </div>
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="err">{error}</p>}

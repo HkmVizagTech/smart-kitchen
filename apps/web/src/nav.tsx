@@ -46,7 +46,7 @@ export const NAV: NavItem[] = [
   { key: "menu",      label: "Menu",          icon: "ti ti-book",                group: "Kitchen",      roles: ["KITCHEN_ADMIN", "SUPER_ADMIN"], needsDate: true, component: Menu },
   // The kitchen is who can act on a complaint about the food, so this sits in
   // their group rather than under Administration.
-  { key: "feedback",  label: "Feedback",      icon: "ti ti-message-2",           group: "Kitchen",      roles: ["KITCHEN_ADMIN", "SUPER_ADMIN"], component: Feedback },
+  { key: "feedback",  label: "Feedback",      icon: "ti ti-star",           group: "Kitchen",      roles: ["KITCHEN_ADMIN", "SUPER_ADMIN"], component: Feedback },
 
   // --- Verification ---
   { key: "verify",    label: "To verify",     icon: "ti ti-checkup-list",        group: "Verification", roles: ["VERIFICATION_ADMIN", "SUPER_ADMIN"], component: Verify },

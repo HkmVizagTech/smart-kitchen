@@ -60,25 +60,68 @@ export function Modal({
   footer?: ReactNode;
   width?: number;
 }) {
+  // Escape closes it, and the page behind stops scrolling while it is open —
+  // on a phone the sheet otherwise drags the whole page with it.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  }, [onClose]);
+
   return (
     <div className="modal-overlay" onMouseDown={onClose}>
       <div
         className="modal"
-        style={width ? { width } : undefined}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        style={width ? ({ "--mw": `${width}px` } as React.CSSProperties) : undefined}
         onMouseDown={(e) => e.stopPropagation()}
       >
+        <div className="modal-grab" aria-hidden="true" />
         <div className="modal-head">
           <div>
             <h3>{title}</h3>
             {subtitle && <p>{subtitle}</p>}
           </div>
-          <button className="x" onClick={onClose} aria-label="Close">×</button>
+          <button className="x" onClick={onClose} aria-label="Close"><i className="ti ti-x" aria-hidden="true"></i></button>
         </div>
         <div className="modal-body">{children}</div>
         {footer && <div className="modal-foot">{footer}</div>}
       </div>
     </div>
   );
+}
+
+/**
+ * Turns every data table into a stack of labelled cards on a phone.
+ *
+ * A six-column table on a 390px screen can only scroll sideways, and the
+ * column that matters is usually the one off-screen. CSS (see "stacked tables"
+ * in styles.css) does the layout at phone width; this only copies each header
+ * onto its cells so the cards can say what each value is. Tables that really
+ * are wide — the packing sheet — opt out with `.nostack` on their wrapper.
+ */
+export function useStackedTables() {
+  useEffect(() => {
+    const label = () => {
+      document.querySelectorAll<HTMLTableElement>(".tablewrap:not(.nostack) table").forEach((t) => {
+        const heads = Array.from(t.querySelectorAll("thead th")).map((h) => (h.textContent ?? "").trim());
+        t.classList.add("stack");
+        t.querySelectorAll("tbody tr").forEach((tr) => {
+          Array.from(tr.children).forEach((td, i) => {
+            if (heads[i] && td.getAttribute("data-label") !== heads[i]) td.setAttribute("data-label", heads[i]);
+          });
+        });
+      });
+    };
+    label();
+    const mo = new MutationObserver(label);
+    mo.observe(document.getElementById("root")!, { childList: true, subtree: true });
+    return () => mo.disconnect();
+  }, []);
 }
 
 /* ---------------- Toasts ---------------- */
