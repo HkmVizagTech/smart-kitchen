@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, FeedbackRow } from "../api";
-import { plural, useLiveRefresh } from "../ui";
+import { Pagination, plural, useLiveRefresh, usePaged } from "../ui";
 
 const SES: Record<string, string> = { BREAKFAST: "Tiffin", LUNCH: "Lunch", DINNER: "Dinner" };
 
@@ -28,39 +28,23 @@ function Stars({ n }: { n: number }) {
 }
 
 export default function Feedback() {
-  const [rows, setRows] = useState<FeedbackRow[]>([]);
   const [sum, setSum] = useState<{ count: number; avgTaste: number; avgQuality: number; poor: number; withRemarks: number } | null>(null);
   const [filter, setFilter] = useState<"all" | "problems" | "remarks">("all");
-  const [err, setErr] = useState("");
-  const [loading, setLoading] = useState(true);
+  const paged = usePaged(
+    (page, pageSize) => api.feedbackPage(page, pageSize, filter === "all" ? undefined : filter),
+    [filter]
+  );
+  const rows = paged.items;
+  const shown = rows;
 
-  const load = useCallback(async (fresh = false) => {
-    if (fresh) setLoading(true);
-    try {
-      const [r, s] = await Promise.all([api.feedback({ limit: 100 }), api.feedbackSummary()]);
-      setRows(r);
-      setSum(s);
-      setErr("");
-    } catch (e: any) {
-      if (fresh) setErr(e.message);
-    } finally {
-      if (fresh) setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { load(true); }, [load]);
+  const loadSummary = useCallback(() => { api.feedbackSummary().then(setSum).catch(() => {}); }, []);
+  useEffect(() => { loadSummary(); }, [loadSummary]);
   // New feedback arrives from somebody else's phone, so this screen waits on
   // other people the same way the close-out does.
-  useLiveRefresh(() => load(false), true);
+  useLiveRefresh(() => { paged.reload(true); loadSummary(); }, true);
 
-  if (loading) return <p className="muted">Loading…</p>;
-  if (err) return <p className="err">{err}</p>;
-
-  const shown = rows.filter((r) =>
-    filter === "problems" ? r.taste <= 2 || r.quality <= 2
-    : filter === "remarks" ? !!r.remarks
-    : true
-  );
+  if (paged.initial) return <p className="muted">Loading…</p>;
+  if (paged.error) return <p className="err">{paged.error}</p>;
 
   return (
     <div>
@@ -94,19 +78,19 @@ export default function Feedback() {
 
       <div className="segmented" style={{ marginTop: 16 }}>
         <button className={filter === "all" ? "on" : ""} onClick={() => setFilter("all")}>
-          All ({rows.length})
+          All
         </button>
         <button className={filter === "problems" ? "on" : ""} onClick={() => setFilter("problems")}>
-          Problems ({rows.filter((r) => r.taste <= 2 || r.quality <= 2).length})
+          Problems
         </button>
         <button className={filter === "remarks" ? "on" : ""} onClick={() => setFilter("remarks")}>
-          With a comment ({rows.filter((r) => r.remarks).length})
+          With a comment
         </button>
       </div>
 
       {shown.length === 0 && (
         <p className="muted" style={{ marginTop: 16 }}>
-          {rows.length === 0
+          {filter === "all"
             ? "No feedback yet. It appears here once a route closes out a meal and verification approves the counts."
             : "Nothing matches this filter."}
         </p>
@@ -151,6 +135,8 @@ export default function Feedback() {
           </div>
         ))}
       </div>
+      <Pagination page={paged.page} pages={paged.pages} total={paged.total} pageSize={paged.pageSize}
+        onPage={paged.setPage} onPageSize={paged.setPageSize} busy={paged.loading} />
     </div>
   );
 }

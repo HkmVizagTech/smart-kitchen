@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback, ReactNode } from "react";
+import type { Paged } from "./api";
 
 /**
  * Re-run something when the person comes back to the app, and on a timer.
@@ -166,5 +167,120 @@ export function Field({
       <label className="lab">{label}</label>
       {children}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------- pagination
+export const PAGE_SIZES = [15, 30, 50];
+
+/**
+ * A list fetched one page at a time.
+ *
+ * `fetcher` must be stable per set of filters: whatever it closes over goes in
+ * `deps`, and changing any of it sends the list back to page 1. The previous
+ * page stays on screen while the next one loads, so searching or turning a page
+ * does not blank the screen (and an open search box keeps its focus).
+ */
+export function usePaged<T>(fetcher: (page: number, pageSize: number) => Promise<Paged<T>>, deps: unknown[]) {
+  const key = JSON.stringify(deps);
+  const [size, setSizeState] = useState(PAGE_SIZES[0]);
+  const [pg, setPg] = useState({ key: `${key}|${size}`, page: 1 });
+  const cur = `${key}|${size}`;
+  const page = pg.key === cur ? pg.page : 1;
+  const [res, setRes] = useState<Paged<T> | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const seq = useRef(0);
+  const fetchRef = useRef(fetcher);
+  fetchRef.current = fetcher;
+
+  const load = useCallback((quiet = false) => {
+    const id = ++seq.current;
+    if (!quiet) setLoading(true);
+    fetchRef.current(page, size)
+      .then((r) => {
+        if (id !== seq.current) return;
+        setRes(r);
+        setError("");
+        // the server pulls a page past the end back to the last one
+        if (r.page !== page) setPg({ key: cur, page: r.page });
+      })
+      .catch((e) => { if (id === seq.current && !quiet) setError(e.message); })
+      .finally(() => { if (id === seq.current && !quiet) setLoading(false); });
+  }, [page, size, cur]);
+
+  useEffect(() => { load(); }, [load]);
+
+  return {
+    items: res?.items ?? [],
+    total: res?.total ?? 0,
+    pages: res?.pages ?? 1,
+    page,
+    pageSize: size,
+    /** true until the first page has arrived */
+    initial: res === null && loading,
+    loading,
+    error,
+    setPage: (n: number) => setPg({ key: cur, page: n }),
+    setPageSize: (n: number) => setSizeState(n),
+    reload: load,
+  };
+}
+
+/** 1 … 4 5 [6] 7 8 … 20 — the numbers to show, with null for a gap. */
+function pageWindow(page: number, pages: number): (number | null)[] {
+  if (pages <= 7) return Array.from({ length: pages }, (_, i) => i + 1);
+  const out: (number | null)[] = [1];
+  const from = Math.max(2, page - 1);
+  const to = Math.min(pages - 1, page + 1);
+  if (from > 2) out.push(null);
+  for (let i = from; i <= to; i++) out.push(i);
+  if (to < pages - 1) out.push(null);
+  out.push(pages);
+  return out;
+}
+
+export function Pagination({ page, pages, total, pageSize, onPage, onPageSize, busy }: {
+  page: number; pages: number; total: number; pageSize: number;
+  onPage: (n: number) => void; onPageSize?: (n: number) => void; busy?: boolean;
+}) {
+  if (total === 0) return null;
+  const from = (page - 1) * pageSize + 1;
+  const to = Math.min(total, page * pageSize);
+  // nothing to turn: say how many there are and stop
+  if (pages <= 1 && pageSize === PAGE_SIZES[0]) {
+    return <div className="pager"><div className="pager-info">Showing {total === 1 ? "1 result" : `all ${total}`}</div></div>;
+  }
+  return (
+    <nav className={`pager ${busy ? "busy" : ""}`} aria-label="Pagination">
+      <div className="pager-info">Showing <b>{from}–{to}</b> of <b>{total}</b></div>
+      <div className="pager-ctl">
+        {onPageSize && (
+          <label className="pager-size">
+            <span>Per page</span>
+            <select value={pageSize} onChange={(e) => onPageSize(Number(e.target.value))}>
+              {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
+        )}
+        <div className="pager-nav">
+          <button className="pg" disabled={page <= 1} onClick={() => onPage(page - 1)} aria-label="Previous page">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 6l-6 6l6 6" /></svg>
+          </button>
+          <span className="pager-now">Page {page} of {pages}</span>
+          <span className="pager-nums">
+            {pageWindow(page, pages).map((n, i) =>
+              n === null
+                ? <span className="pg gap" key={`g${i}`}>…</span>
+                : <button key={n} className={`pg ${n === page ? "on" : ""}`} onClick={() => onPage(n)}
+                    aria-current={n === page ? "page" : undefined}>{n}</button>
+            )}
+          </span>
+          <button className="pg" disabled={page >= pages} onClick={() => onPage(page + 1)} aria-label="Next page">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 6l6 6l-6 6" /></svg>
+          </button>
+        </div>
+      </div>
+    </nav>
   );
 }

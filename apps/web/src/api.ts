@@ -16,7 +16,7 @@ export const getToken = () => localStorage.getItem(TOKEN_KEY);
 export const setToken = (t: string) => localStorage.setItem(TOKEN_KEY, t);
 export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
 
-async function req<T>(path: string, options?: RequestInit): Promise<T> {
+async function reqRaw<T>(path: string, options?: RequestInit): Promise<{ data: T; res: Response }> {
   const token = getToken();
   const res = await fetch(`${API_BASE}${path}`, {
     headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
@@ -41,8 +41,36 @@ async function req<T>(path: string, options?: RequestInit): Promise<T> {
       throw new Error("The server had a problem with this. It has been logged — try again in a moment.");
     throw new Error(data?.error || `Request failed (${res.status})`);
   }
-  return data as T;
+  return { data: data as T, res };
 }
+
+async function req<T>(path: string, options?: RequestInit): Promise<T> {
+  return (await reqRaw<T>(path, options)).data;
+}
+
+// ------------------------------------------------------------------ paging
+/** One page of a list, with the totals the server reports in response headers. */
+export interface Paged<T> { items: T[]; total: number; page: number; pageSize: number; pages: number }
+
+export const DEFAULT_PAGE_SIZE = 15;
+
+async function reqPaged<T>(path: string, page: number, pageSize: number, extra: Record<string, string | undefined> = {}): Promise<Paged<T>> {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(extra)) if (v) p.set(k, v);
+  p.set("page", String(page));
+  p.set("pageSize", String(pageSize));
+  const { data, res } = await reqRaw<T[]>(`${path}${path.includes("?") ? "&" : "?"}${p}`);
+  const num = (h: string, d: number) => { const n = Number(res.headers.get(h)); return Number.isFinite(n) && n > 0 ? n : d; };
+  const items = Array.isArray(data) ? data : [];
+  return {
+    items,
+    total: Number(res.headers.get("X-Total-Count") ?? items.length) || 0,
+    page: num("X-Page", page),
+    pageSize: num("X-Page-Size", pageSize),
+    pages: num("X-Total-Pages", 1),
+  };
+}
+
 
 // ------------------------------------------------------------------ identity
 export type Role = "BOOKING" | "KITCHEN_ADMIN" | "VERIFICATION_ADMIN" | "SUPER_ADMIN";
@@ -437,6 +465,8 @@ export const api = {
   menu: (date: string, session: string) =>
     req<DayMenu>(`/menu?date=${date}&session=${encodeURIComponent(session)}`),
   recentBookings: () => req<Booking[]>("/bookings/recent"),
+  /** The full booking history, one page at a time. */
+  bookingsPage: (page: number, pageSize = DEFAULT_PAGE_SIZE) => reqPaged<Booking>("/bookings/recent", page, pageSize),
   closeoutItems: (orderId: number) => req<CloseoutItems>(`/orders/${orderId}/closeout-items`),
   bookingStatus: () => req<BookingStatus>("/me/booking-status"),
   /** The configured lunch cutoff, so the screen never states a different time
@@ -511,6 +541,13 @@ export const api = {
   // --- VERIFICATION_ADMIN ---
   pending: () => req<Pending[]>("/verification/pending"),
   done: () => req<Done[]>("/verification/done"),
+  donePage: (page: number, pageSize = DEFAULT_PAGE_SIZE) => reqPaged<Done>("/verification/done", page, pageSize),
+  /** Totals over every verified meal (the list above is paged). */
+  doneSummary: () =>
+    req<{ meals: number; plates: number; amount: number; unpriced: number;
+          byUnit: { unit: string; meals: number; plates: number; amount: number; priced: number }[] }>(
+      "/verification/done/summary"
+    ),
   /** The verifier is taken from the signed-in session server-side. */
   /** Approving freezes the amount; returning requires a reason. */
   verify: (orderId: number, approve: boolean, reason?: string) =>
@@ -527,6 +564,8 @@ export const api = {
     if (q.session) p.set("session", q.session);
     return req<FeedbackRow[]>(`/feedback/recent${p.toString() ? `?${p}` : ""}`);
   },
+  feedbackPage: (page: number, pageSize = DEFAULT_PAGE_SIZE, filter?: "problems" | "remarks") =>
+    reqPaged<FeedbackRow>("/feedback/recent", page, pageSize, { filter }),
   feedbackSummary: () =>
     req<{ count: number; avgTaste: number; avgQuality: number; poor: number; withRemarks: number }>(
       "/feedback/summary"
@@ -535,6 +574,9 @@ export const api = {
   /** Every emergency order and what was decided. Super Admin. */
   emergencyOrders: (status?: string) =>
     req<EmergencyRow[]>(`/orders/emergency${status ? `?status=${status}` : ""}`),
+
+  emergencyOrdersPage: (page: number, pageSize = DEFAULT_PAGE_SIZE, status?: string) =>
+    reqPaged<EmergencyRow>("/orders/emergency", page, pageSize, { status }),
 
   // --- SUPER_ADMIN ---
   dishes: () => req<Dish[]>("/admin/dishes"),
@@ -559,6 +601,12 @@ export const api = {
 
   users: (includeDeleted = false) =>
     req<User[]>(`/admin/users${includeDeleted ? "?includeDeleted=1" : ""}`),
+  usersPage: (q: { page: number; pageSize?: number; q?: string; role?: string; includeDeleted?: boolean }) =>
+    reqPaged<User>("/admin/users", q.page, q.pageSize ?? DEFAULT_PAGE_SIZE, {
+      q: q.q?.trim() || undefined,
+      role: q.role && q.role !== "ALL" ? q.role : undefined,
+      includeDeleted: q.includeDeleted ? "1" : undefined,
+    }),
   createUser: (body: NewUser) =>
     req<User>("/admin/users", { method: "POST", body: JSON.stringify(body) }),
   saveUser: (

@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@sk/db";
 import { requireRole } from "../guard.js";
 import { addDays, dayRange, localYmd, requireYmd, storedYmd } from "../time.js";
+import { pageSpec, pageWindow, sendPageHeaders } from "../paging.js";
 
 const ROLES = ["BOOKING", "KITCHEN_ADMIN", "VERIFICATION_ADMIN", "SUPER_ADMIN"];
 const publicUser = (u: any) => ({
@@ -127,14 +128,35 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   // ---- USERS (profiles + roles + lifecycle) ----
   // List users. Archived (soft-deleted) hidden unless ?includeDeleted=1.
-  app.get<{ Querystring: { includeDeleted?: string } }>("/admin/users", async (req) => {
-    const includeDeleted = req.query.includeDeleted === "1";
-    const users = await prisma.user.findMany({
-      where: includeDeleted ? {} : { deletedAt: null },
-      orderBy: { id: "asc" },
-    });
-    return users.map(publicUser);
-  });
+  app.get<{ Querystring: { includeDeleted?: string; page?: string; pageSize?: string; q?: string; role?: string } }>(
+    "/admin/users",
+    async (req, reply) => {
+      const includeDeleted = req.query.includeDeleted === "1";
+      const q = (req.query.q ?? "").trim();
+      const role = ROLES.includes(req.query.role ?? "") ? (req.query.role as any) : undefined;
+      const where: any = {
+        ...(includeDeleted ? {} : { deletedAt: null }),
+        ...(role ? { role } : {}),
+        ...(q
+          ? {
+              OR: ["name", "username", "email", "phone", "iskconRole", "centre"].map((f) => ({
+                [f]: { contains: q, mode: "insensitive" },
+              })),
+            }
+          : {}),
+      };
+      const spec = pageSpec(req.query);
+      if (!spec.enabled) {
+        const users = await prisma.user.findMany({ where, orderBy: { id: "asc" } });
+        return users.map(publicUser);
+      }
+      const total = await prisma.user.count({ where });
+      const w = pageWindow(spec, total);
+      const users = await prisma.user.findMany({ where, orderBy: { id: "asc" }, skip: w.skip, take: w.take });
+      sendPageHeaders(reply, spec, total);
+      return users.map(publicUser);
+    }
+  );
 
   // Create a user directly (Super Admin). Admin sets the initial password.
   app.post<{

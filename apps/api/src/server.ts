@@ -24,7 +24,11 @@ const app = Fastify({
   trustProxy: Number(process.env.TRUSTED_PROXY_HOPS ?? 1),
 });
 
-await app.register(cors, { origin: true });
+await app.register(cors, {
+  origin: true,
+  // pagination totals travel in headers, which browsers hide from scripts unless listed
+  exposedHeaders: ["X-Total-Count", "X-Page", "X-Page-Size", "X-Total-Pages"],
+});
 
 // Accept raw zip uploads (OTA bundles) as a Buffer.
 app.addContentTypeParser(

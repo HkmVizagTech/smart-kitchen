@@ -5,6 +5,7 @@ import { notifyRoles, notifyUsers } from "../notify.js";
 import { must, requireAuth, requireRole } from "../guard.js";
 import { dayRange, requireYmd } from "../time.js";
 import { expandSlots, menuFor } from "../menu.js";
+import { pageSpec, pageWindow, sendPageHeaders, type PageQuery } from "../paging.js";
 
 /** The only meals there are. Anything else in a request body is a typo or a
     hand-rolled call, and reaches Prisma as an unknown enum value if not caught. */
@@ -475,7 +476,7 @@ export default async function orderRoutes(app: FastifyInstance) {
   // admin screens want the whole picture. The row therefore carries who placed
   // it, so a client showing "My Bookings" can filter, and so the booking screen
   // can offer to repeat the caller's OWN last order rather than a stranger's.
-  app.get("/bookings/recent", { preHandler: requireAuth }, async (req) => {
+  app.get<{ Querystring: PageQuery }>("/bookings/recent", { preHandler: requireAuth }, async (req, reply) => {
     const session = must(req);
     const me = session.userId;
     // A booker sees their own orders and nothing else. This used to return the
@@ -487,8 +488,18 @@ export default async function orderRoutes(app: FastifyInstance) {
     // verification checks it, and a Super Admin has to be able to see a route
     // they booked on behalf of.
     const everyone = session.role !== "BOOKING";
+    // Asked for a page: slice the full history. Not asked: the latest 60, as
+    // before — the close-out picker and the "needs attention" list read that.
+    const where = everyone ? {} : { bookedById: me };
+    const spec = pageSpec(req.query);
+    let window: { skip: number; take: number } = { skip: 0, take: 60 };
+    if (spec.enabled) {
+      const total = await prisma.order.count({ where });
+      window = pageWindow(spec, total);
+      sendPageHeaders(reply, spec, total);
+    }
     const orders = await prisma.order.findMany({
-      where: everyone ? {} : { bookedById: me },
+      where,
       include: {
         unit: true,
         items: { include: { dish: true } },
@@ -497,7 +508,8 @@ export default async function orderRoutes(app: FastifyInstance) {
         bookedBy: { select: { name: true, role: true } },
       },
       orderBy: [{ date: "desc" }, { id: "desc" }],
-      take: 60,
+      skip: window.skip,
+      take: window.take,
     });
     const cutoff = await lunchDeadline();
     const now = new Date();
@@ -724,21 +736,31 @@ export default async function orderRoutes(app: FastifyInstance) {
    * list as a small mark beside the meal name. "Which emergency meals went out
    * last week, and who approved them" had no answer short of reading every row.
    */
-  app.get<{ Querystring: { status?: string; days?: string } }>(
+  app.get<{ Querystring: { status?: string; days?: string } & PageQuery }>(
     "/orders/emergency",
     { preHandler: requireRole("SUPER_ADMIN") },
-    async (req) => {
+    async (req, reply) => {
       const days = Math.min(Math.max(Number(req.query.days ?? 60) || 60, 1), 365);
       const since = new Date(Date.now() - days * 86_400_000);
       const want = (req.query.status ?? "").toUpperCase();
+      const where = {
+        isEmergency: true,
+        date: { gte: since },
+        ...(["PENDING", "APPROVED", "DECLINED"].includes(want)
+          ? { approval: want as "PENDING" | "APPROVED" | "DECLINED" }
+          : {}),
+      };
+      const spec = pageSpec(req.query);
+      let win: { skip?: number; take?: number } = {};
+      if (spec.enabled) {
+        const total = await prisma.order.count({ where });
+        const w = pageWindow(spec, total);
+        win = { skip: w.skip, take: w.take };
+        sendPageHeaders(reply, spec, total);
+      }
       const rows = await prisma.order.findMany({
-        where: {
-          isEmergency: true,
-          date: { gte: since },
-          ...(["PENDING", "APPROVED", "DECLINED"].includes(want)
-            ? { approval: want as "PENDING" | "APPROVED" | "DECLINED" }
-            : {}),
-        },
+        where,
+        ...win,
         include: {
           unit: true,
           bookedBy: { select: { name: true } },
@@ -1088,12 +1110,21 @@ export default async function orderRoutes(app: FastifyInstance) {
   });
 
   // Verified history (for the payments view).
-  app.get("/verification/done", { preHandler: requireRole("VERIFICATION_ADMIN") }, async () => {
+  app.get<{ Querystring: PageQuery }>("/verification/done", { preHandler: requireRole("VERIFICATION_ADMIN") }, async (req, reply) => {
+    const where = { status: "VERIFIED" as const };
+    const spec = pageSpec(req.query);
+    let win: { skip: number; take: number } = { skip: 0, take: 100 };
+    if (spec.enabled) {
+      const total = await prisma.consumption.count({ where });
+      win = pageWindow(spec, total);
+      sendPageHeaders(reply, spec, total);
+    }
     const cons = await prisma.consumption.findMany({
-      where: { status: "VERIFIED" },
+      where,
       include: { order: { include: { unit: true } } },
       orderBy: { verifiedAt: "desc" },
-      take: 100,
+      skip: win.skip,
+      take: win.take,
     });
     return cons.map((c) => ({
       orderId: c.orderId,
@@ -1105,6 +1136,29 @@ export default async function orderRoutes(app: FastifyInstance) {
       // Frozen at approval — see amountFor().
       amount: c.amount,
     }));
+  });
+
+  // Totals for the Payments screen, over EVERY verified meal. The list above is
+  // paged, so the page can no longer add its own totals up from the rows it has.
+  app.get("/verification/done/summary", { preHandler: requireRole("VERIFICATION_ADMIN") }, async () => {
+    const cons = await prisma.consumption.findMany({
+      where: { status: "VERIFIED" },
+      select: { consumedQty: true, amount: true, order: { select: { unit: { select: { name: true } } } } },
+    });
+    const byUnit: Record<string, { meals: number; plates: number; amount: number; priced: number }> = {};
+    for (const c of cons) {
+      const row = (byUnit[c.order.unit.name] ??= { meals: 0, plates: 0, amount: 0, priced: 0 });
+      row.meals += 1;
+      row.plates += c.consumedQty;
+      if (c.amount != null) { row.amount += c.amount; row.priced += 1; }
+    }
+    return {
+      meals: cons.length,
+      plates: cons.reduce((a, c) => a + c.consumedQty, 0),
+      amount: cons.reduce((a, c) => a + (c.amount ?? 0), 0),
+      unpriced: cons.filter((c) => c.amount == null).length,
+      byUnit: Object.entries(byUnit).map(([unit, v]) => ({ unit, ...v })),
+    };
   });
 
   // What a close-out is worth: consumed plates x the dish's rate, falling back
@@ -1193,21 +1247,33 @@ export default async function orderRoutes(app: FastifyInstance) {
   //
   // Kitchen and Super Admin. Verification deliberately does not see it: their
   // job is the plate counts, and knowing the rating first would colour that.
-  app.get<{ Querystring: { limit?: string; unitId?: string; session?: string } }>(
+  app.get<{ Querystring: { limit?: string; unitId?: string; session?: string; filter?: string } & PageQuery }>(
     "/feedback/recent",
     { preHandler: requireRole("KITCHEN_ADMIN") },
-    async (req) => {
+    async (req, reply) => {
       const take = Math.min(Math.max(Number(req.query.limit ?? 50) || 50, 1), 200);
       const unitId = Number(req.query.unitId);
-      const rows = await prisma.feedback.findMany({
-        where: {
-          order: {
-            ...(Number.isInteger(unitId) && unitId > 0 ? { unitId } : {}),
-            ...(SESSIONS.includes(req.query.session as Sess) ? { session: req.query.session as Sess } : {}),
-          },
+      // "problems" = a 2 or below on either score; "remarks" = wrote something.
+      const where: any = {
+        order: {
+          ...(Number.isInteger(unitId) && unitId > 0 ? { unitId } : {}),
+          ...(SESSIONS.includes(req.query.session as Sess) ? { session: req.query.session as Sess } : {}),
         },
+        ...(req.query.filter === "problems" ? { OR: [{ taste: { lte: 2 } }, { quality: { lte: 2 } }] } : {}),
+        ...(req.query.filter === "remarks" ? { remarks: { not: null }, NOT: { remarks: "" } } : {}),
+      };
+      const spec = pageSpec(req.query);
+      let win: { skip: number; take: number } = { skip: 0, take };
+      if (spec.enabled) {
+        const total = await prisma.feedback.count({ where });
+        win = pageWindow(spec, total);
+        sendPageHeaders(reply, spec, total);
+      }
+      const rows = await prisma.feedback.findMany({
+        where,
         orderBy: { createdAt: "desc" },
-        take,
+        skip: win.skip,
+        take: win.take,
         include: {
           order: {
             include: {

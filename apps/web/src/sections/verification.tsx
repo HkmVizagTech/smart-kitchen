@@ -6,7 +6,7 @@
 // saying what.
 
 import { useEffect, useState } from "react";
-import { useLiveRefresh } from "../ui";
+import { Pagination, useLiveRefresh, usePaged } from "../ui";
 import { api, Done, Pending } from "../api";
 
 const SES: Record<string, string> = { BREAKFAST: "Tiffin", LUNCH: "Lunch", DINNER: "Dinner" };
@@ -182,25 +182,19 @@ export function Verify() {
 }
 
 export function Payments() {
-  const [list, setList] = useState<Done[] | null>(null);
+  const paged = usePaged((page, pageSize) => api.donePage(page, pageSize), []);
+  const [sum, setSum] = useState<Awaited<ReturnType<typeof api.doneSummary>> | null>(null);
   const [error, setError] = useState("");
-  useEffect(() => {
-    api.done().then(setList).catch((e) => setError(e.message));
-  }, []);
-  if (error) return <p className="err">{error}</p>;
-  if (!list) return <p className="muted">Loading…</p>;
+  useEffect(() => { api.doneSummary().then(setSum).catch((e) => setError(e.message)); }, []);
+  if (error || paged.error) return <p className="err">{error || paged.error}</p>;
+  if (paged.initial || !sum) return <p className="muted">Loading…</p>;
 
-  // Plates and rupees per route. Amount is null on anything verified before
-  // rates existed, so it is summed separately from the plate count rather than
-  // being treated as zero.
-  const byUnit: Record<string, { plates: number; amount: number; priced: number }> = {};
-  for (const d of list) {
-    const row = (byUnit[d.unit] ??= { plates: 0, amount: 0, priced: 0 });
-    row.plates += d.consumed;
-    if (d.amount != null) { row.amount += d.amount; row.priced += 1; }
-  }
-  const grand = list.reduce((a, d) => a + (d.amount ?? 0), 0);
-  const unpriced = list.filter((d) => d.amount == null).length;
+  // Totals come from the server over every verified meal; the list below is
+  // only the page being looked at. Amount is null on anything verified before
+  // rates existed, so unpriced meals are counted apart rather than as zero.
+  const list = paged.items;
+  const grand = sum.amount;
+  const unpriced = sum.unpriced;
 
   return (
     <>
@@ -221,11 +215,11 @@ export function Payments() {
         <div className="stat">
           <div className="l">Total owed</div>
           <div className="n">{money(grand)}</div>
-          <div className="s">{list.length} verified meals</div>
+          <div className="s">{sum.meals} verified meals</div>
         </div>
         <div className="stat">
           <div className="l">Plates consumed</div>
-          <div className="n">{list.reduce((a, d) => a + d.consumed, 0)}</div>
+          <div className="n">{sum.plates}</div>
           <div className="s">verified only</div>
         </div>
       </div>
@@ -243,15 +237,15 @@ export function Payments() {
               </tr>
             </thead>
             <tbody>
-              {Object.entries(byUnit).map(([u, v]) => (
-                <tr key={u}>
-                  <td style={{ fontWeight: 600 }}>{u}</td>
+              {sum.byUnit.map((v) => (
+                <tr key={v.unit}>
+                  <td style={{ fontWeight: 600 }}>{v.unit}</td>
                   <td>{v.priced}</td>
                   <td>{v.plates}</td>
                   <td style={{ fontWeight: 700 }}>{money(v.amount)}</td>
                 </tr>
               ))}
-              {Object.keys(byUnit).length === 0 && (
+              {sum.byUnit.length === 0 && (
                 <tr>
                   <td colSpan={4} className="muted">No verified meals yet.</td>
                 </tr>
@@ -262,7 +256,7 @@ export function Payments() {
       </div>
 
       <div className="card">
-        <div className="section-title">Recent verified meals</div>
+        <div className="section-title">Verified meals</div>
         <div className="tablewrap">
           <table style={{ marginTop: 8 }}>
             <thead>
@@ -287,6 +281,8 @@ export function Payments() {
             </tbody>
           </table>
         </div>
+        <Pagination page={paged.page} pages={paged.pages} total={paged.total} pageSize={paged.pageSize}
+          onPage={paged.setPage} onPageSize={paged.setPageSize} busy={paged.loading} />
       </div>
     </>
   );

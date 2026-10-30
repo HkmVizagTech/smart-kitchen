@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, Dish, DishGroup, EmergencyRow, Unit, User, Vessel, Role, NewUser } from "../api";
 import { ymd, today } from "../util";
-import { Modal, Field, plural, useToast, useLiveRefresh } from "../ui";
+import { Modal, Field, Pagination, plural, useToast, useLiveRefresh, usePaged } from "../ui";
 
 function useAsync<T>(fn: () => Promise<T>, deps: any[] = []) {
   const [data, setData] = useState<T | null>(null);
@@ -299,10 +299,16 @@ const emptyNew = (): NewUser => ({ role: "BOOKING", username: "", password: "", 
 
 export function Users() {
   const [showArchived, setShowArchived] = useState(false);
-  const { data, error, loading, reload } = useAsync(() => api.users(showArchived), [showArchived]);
   const toast = useToast();
   const [filter, setFilter] = useState<string>("ALL");
   const [q, setQ] = useState("");
+  // wait for a pause in typing before asking the server
+  const [dq, setDq] = useState("");
+  useEffect(() => { const t = setTimeout(() => setDq(q.trim()), 300); return () => clearTimeout(t); }, [q]);
+  const paged = usePaged(
+    (page, pageSize) => api.usersPage({ page, pageSize, q: dq, role: filter, includeDeleted: showArchived }),
+    [dq, filter, showArchived]
+  );
   const [busy, setBusy] = useState(false);
 
   // modal state
@@ -313,19 +319,15 @@ export function Users() {
 
   async function run(fn: () => Promise<any>, ok: string, after?: () => void) {
     setBusy(true);
-    try { await fn(); toast(ok); reload(); after?.(); }
+    try { await fn(); toast(ok); paged.reload(true); after?.(); }
     catch (e: any) { toast(e.message, "err"); }
     finally { setBusy(false); }
   }
 
-  if (loading) return <p className="muted">Loading…</p>;
-  if (error) return <p className="err">{error}</p>;
+  if (paged.initial) return <p className="muted">Loading…</p>;
+  if (paged.error) return <p className="err">{paged.error}</p>;
 
-  const ql = q.trim().toLowerCase();
-  const list = data!
-    .filter((u) => filter === "ALL" || u.role === filter)
-    .filter((u) => !ql || [u.name, u.username, u.email, u.phone, u.iskconRole, u.centre]
-      .some((v) => (v ?? "").toLowerCase().includes(ql)));
+  const list = paged.items;
 
   return (
     <div>
@@ -414,6 +416,8 @@ export function Users() {
           </table>
         </div>
       )}
+      <Pagination page={paged.page} pages={paged.pages} total={paged.total} pageSize={paged.pageSize}
+        onPage={paged.setPage} onPageSize={paged.setPageSize} busy={paged.loading} />
 
       {adding && <AddUserModal busy={busy} onClose={() => setAdding(false)}
         onSave={(body, done) => run(() => api.createUser(body), `Created ${body.name}`, done)} />}
@@ -670,23 +674,13 @@ const WASTE_ALERT_PCT = 10;
  * without reading every row of every day.
  */
 export function Emergencies() {
-  const [rows, setRows] = useState<EmergencyRow[]>([]);
   const [status, setStatus] = useState<"" | "PENDING" | "APPROVED" | "DECLINED">("");
-  const [err, setErr] = useState("");
-  const [loading, setLoading] = useState(true);
+  const paged = usePaged((page, pageSize) => api.emergencyOrdersPage(page, pageSize, status || undefined), [status]);
+  const rows = paged.items;
+  useLiveRefresh(() => paged.reload(true), true);
 
-  const load = useCallback(async (fresh = false) => {
-    if (fresh) setLoading(true);
-    try { setRows(await api.emergencyOrders(status || undefined)); setErr(""); }
-    catch (e: any) { if (fresh) setErr(e.message); }
-    finally { if (fresh) setLoading(false); }
-  }, [status]);
-
-  useEffect(() => { load(true); }, [load]);
-  useLiveRefresh(() => load(false), true);
-
-  if (loading) return <p className="muted">Loading…</p>;
-  if (err) return <p className="err">{err}</p>;
+  if (paged.initial) return <p className="muted">Loading…</p>;
+  if (paged.error) return <p className="err">{paged.error}</p>;
 
   const TABS: { key: typeof status; label: string }[] = [
     { key: "", label: "All" },
@@ -749,6 +743,8 @@ export function Emergencies() {
           </div>
         ))}
       </div>
+      <Pagination page={paged.page} pages={paged.pages} total={paged.total} pageSize={paged.pageSize}
+        onPage={paged.setPage} onPageSize={paged.setPageSize} busy={paged.loading} />
     </div>
   );
 }

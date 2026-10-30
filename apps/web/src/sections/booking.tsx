@@ -3,7 +3,7 @@ import {
   api, AuthedUser, Booking, BookingStatus, DayMenu, MealStatus, MenuDish, MenuSlot,
   Progress, SlotCounts,
 } from "../api";
-import { useLiveRefresh } from "../ui";
+import { Pagination, useLiveRefresh, usePaged } from "../ui";
 
 const today = () => new Date();
 const tomorrow = () => { const d = new Date(); d.setDate(d.getDate() + 1); return d; };
@@ -726,16 +726,23 @@ export function MyBookings({ user, onCloseOut }: { user: AuthedUser; onCloseOut:
   // name the three items rather than showing bare boxes.
   const [editing, setEditing] = useState<Booking | null>(null);
   const [editMenu, setEditMenu] = useState<DayMenu | null>(null);
-  const reload = () => api.recentBookings().then(setAll).catch((e) => setErr(e.message));
-  useEffect(() => { reload(); }, []);
+  // `all` (the latest 60) answers "what needs closing out?" — that has to look at
+  // more than one page. The history below it is the paged list.
+  const paged = usePaged((page, pageSize) => api.bookingsPage(page, pageSize), []);
+  const reload = () => {
+    api.recentBookings().then(setAll).catch((e) => setErr(e.message));
+    paged.reload(true);
+  };
+  useEffect(() => { api.recentBookings().then(setAll).catch((e) => setErr(e.message)); }, []);
   useEffect(() => {
     if (!editing || editing.session === "LUNCH" || editing.isEmergency) { setEditMenu(null); return; }
     api.menu(editing.date.slice(0, 10), editing.session).then(setEditMenu).catch(() => setEditMenu(null));
   }, [editing?.id]);
   if (err) return <p className="err">{err}</p>;
-  if (!all) return <p className="muted">Loading…</p>;
-  const list = all;
-  const need = list.filter((b) => b.needsCloseOut && b.status !== "CLOSED");
+  if (!all || paged.initial) return <p className="muted">Loading…</p>;
+  if (paged.error) return <p className="err">{paged.error}</p>;
+  const list = paged.items;
+  const need = all.filter((b) => b.needsCloseOut && b.status !== "CLOSED");
   const itemSummary = (b: Booking) =>
     b.items.length ? b.items.map((it) => `${it.dish}×${it.plates}`).join(", ") : `${b.peopleCount ?? 0} people`;
   return (
@@ -773,7 +780,7 @@ export function MyBookings({ user, onCloseOut }: { user: AuthedUser; onCloseOut:
         </>
       )}
       <h2>{admin ? "Every route" : "Everything you have booked"}</h2>
-      {list.length === 0 && (
+      {paged.total === 0 && (
         <div className="card">
           <p className="muted">{admin ? "No bookings yet." : "You haven't booked anything yet."}</p>
         </div>
@@ -828,6 +835,8 @@ export function MyBookings({ user, onCloseOut }: { user: AuthedUser; onCloseOut:
           ) : null}
         </div>
       ))}
+      <Pagination page={paged.page} pages={paged.pages} total={paged.total} pageSize={paged.pageSize}
+        onPage={paged.setPage} onPageSize={paged.setPageSize} busy={paged.loading} />
     </>
   );
 }
