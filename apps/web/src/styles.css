@@ -1357,25 +1357,74 @@ html, body { overscroll-behavior: none; }
 .tablewrap, .segmented { overscroll-behavior-x: contain; }
 .navbar { position: sticky; top: 0; z-index: 60; }
 @media (min-width: 861px) {
-  html, body { overflow: hidden; }
-  .app { height: 100vh; min-height: 0; overflow: hidden; }
+  html, body { overflow: hidden; overflow: clip; }
+  .app { height: 100vh; min-height: 0; overflow: hidden; overflow: clip; }
   .navbar { flex-shrink: 0; position: relative; }
-  .shell { flex: 1; min-height: 0; align-items: stretch; overflow: hidden; }
-  .sidebar:not(.drawer) {
+  .shell { flex: 1; min-height: 0; align-items: stretch; overflow: hidden; overflow: clip; container-type: inline-size; }
+  .sidebar {
     position: static; height: 100%; overflow-y: auto; overscroll-behavior: contain;
     flex-shrink: 0; scrollbar-width: thin;
   }
   .main {
     height: 100%; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
     max-width: none; margin: 0; width: auto; flex: 1; min-width: 0;
-    --gut: max(28px, calc((100% - 1064px) / 2));
+    --gut: max(28px, calc((100cqw - 232px - 1064px) / 2));
     padding: 26px var(--gut);
   }
-  .main .confirm-bar { margin-left: calc(-1 * var(--gut)); margin-right: calc(-1 * var(--gut)); padding-left: var(--gut); padding-right: var(--gut); }
+  /* the pinned total bar floats as a card in the content column, like every other card */
+  .main .confirm-bar {
+    bottom: 16px; margin: 22px 0 -10px; padding: 12px 14px 12px 20px;
+    border: 1px solid var(--border-2); border-radius: 16px;
+    box-shadow: 0 10px 30px -8px rgba(17, 45, 78, .22), 0 2px 6px rgba(17, 45, 78, .06);
+  }
 }
 /* short laptop screens: tighten the menu so the Super Admin list mostly fits */
 @media (min-width: 861px) and (max-height: 900px) {
-  .sidebar:not(.drawer) { padding-top: 10px; padding-bottom: 10px; }
-  .sidebar:not(.drawer) .item { padding-top: 8px; padding-bottom: 8px; }
-  .sidebar:not(.drawer) .nav { gap: 2px; }
+  .sidebar { padding-top: 10px; padding-bottom: 10px; }
+  .sidebar .item { padding-top: 8px; padding-bottom: 8px; }
+  .sidebar .nav { gap: 2px; }
 }
+
+/* ---------------- polish pass: spacing, badges, cards ---------------- */
+
+/* stat cards: a rounded accent pill instead of a bar clipped into a crescent */
+.stat { border-left: 1px solid var(--border-2); padding: 18px 18px 18px 24px; }
+.stat::before { left: 9px; top: 16px; bottom: 16px; width: 4px; border-radius: 4px; }
+.stats-grid { gap: 16px; }
+/* five or six cards split into even rows of three, not a row of four and an orphan pair */
+.stats-grid:has(> :nth-child(5)):not(:has(> :nth-child(7))) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 860px) { .stats-grid:has(> :nth-child(5)):not(:has(> :nth-child(7))) { grid-template-columns: repeat(2, minmax(0, 1fr)); } .stat .l { overflow-wrap: anywhere; } }
+
+/* nav unread dot: centred on the row and clear of the label */
+.sidebar .item .navdot { top: 50%; right: 14px; transform: translateY(-50%); width: 9px; height: 9px; }
+@media (min-width: 861px) { .sidebar .item .navdot { top: 50%; transform: translateY(-50%); } }
+
+/* empty states match the card family instead of a warm-grey slab */
+.empty {
+  background: #fff; border: 1.5px dashed var(--border-2); border-radius: var(--radius-lg);
+  padding: 44px 16px; color: var(--text-2); font-weight: 600;
+}
+.empty i { color: var(--primary); opacity: .45; font-size: 40px; }
+
+/* page rhythm: consistent gap between heading, blurb and first block */
+.main > h1 { margin-bottom: 6px; }
+.main > h1 + .muted { margin: 0 0 18px; }
+.main .card { margin-bottom: 18px; }
+.main { padding-bottom: 40px; }
+
+/* the pinned total bar */
+.confirm-bar .cb-sum, .confirm-bar > span { font-weight: 600; color: var(--text-2); }
+
+/* dishes: labels and controls share one baseline; switches line up with inputs */
+.erow-fields { align-items: flex-start; gap: 14px 16px; }
+.ef.toggle { align-items: flex-start; }
+.ef.toggle > label.switch { margin: 9px 0 0; }
+.erow-action { align-self: flex-end; }
+.ef.narrow .ctrl { width: 108px; }
+.inp-unit .u.pre { left: 12px; right: auto; order: 0; padding: 0; }
+.inp-unit:has(.u.pre) input { padding-left: 26px; padding-right: 10px; }
+.btn:disabled { opacity: .55; box-shadow: none; }
+
+/* new-booking meal cards: breathing room inside, equal heights */
+.erow-main { gap: 14px; }
+.copyfrom { margin: 12px 0 10px; }
