@@ -1346,3 +1346,36 @@ tbody tr:hover { background: #f7faff; }
 
 /* scrollbars */
 * { scrollbar-width: thin; scrollbar-color: #b9c5d8 transparent; }
+
+/* ---------------- fixed chrome, contained scrolling ----------------
+   Desktop: the window itself never scrolls. The top bar and the left menu are
+   fixed in place and ONLY the content area on the right scrolls (up/down and,
+   for the packing sheet, sideways inside its own table). The menu scrolls on
+   its own only when it is taller than the window. Phones keep the page scroll
+   with the bottom tab bar / drawer. */
+html, body { overscroll-behavior: none; }
+.tablewrap, .segmented { overscroll-behavior-x: contain; }
+.navbar { position: sticky; top: 0; z-index: 60; }
+@media (min-width: 861px) {
+  html, body { overflow: hidden; }
+  .app { height: 100vh; min-height: 0; overflow: hidden; }
+  .navbar { flex-shrink: 0; position: relative; }
+  .shell { flex: 1; min-height: 0; align-items: stretch; overflow: hidden; }
+  .sidebar:not(.drawer) {
+    position: static; height: 100%; overflow-y: auto; overscroll-behavior: contain;
+    flex-shrink: 0; scrollbar-width: thin;
+  }
+  .main {
+    height: 100%; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
+    max-width: none; margin: 0; width: auto; flex: 1; min-width: 0;
+    --gut: max(28px, calc((100% - 1064px) / 2));
+    padding: 26px var(--gut);
+  }
+  .main .confirm-bar { margin-left: calc(-1 * var(--gut)); margin-right: calc(-1 * var(--gut)); padding-left: var(--gut); padding-right: var(--gut); }
+}
+/* short laptop screens: tighten the menu so the Super Admin list mostly fits */
+@media (min-width: 861px) and (max-height: 900px) {
+  .sidebar:not(.drawer) { padding-top: 10px; padding-bottom: 10px; }
+  .sidebar:not(.drawer) .item { padding-top: 8px; padding-bottom: 8px; }
+  .sidebar:not(.drawer) .nav { gap: 2px; }
+}
