@@ -166,7 +166,7 @@ export default function App() {
 
             {current?.needsDate ? (
               <div className="toolbar">
-                <label className="muted" htmlFor="cooking-date">Cooking date</label>
+                <label htmlFor="cooking-date"><i className="ti ti-clock" aria-hidden="true"></i> Cooking date</label>
                 <input
                   id="cooking-date"
                   type="date"

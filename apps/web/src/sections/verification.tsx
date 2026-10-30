@@ -144,26 +144,20 @@ export function Verify() {
               </div>
             )}
           </div>
-          <div style={{ marginTop: 10 }}>
+          <div className="vtab">
+            <div className="vrow vhead"><span>Dish</span><span>Ordered</span><span>Consumed</span><span>Left</span></div>
             {p.items.map((it) => (
-              <div className="vline" key={it.name}>
+              <div className="vrow" key={it.name}>
                 <span className="vn">{it.name}</span>
-                <span className="vv">
-                  ordered {it.ordered} · consumed {it.consumed}
-                  {it.extra > 0 ? <span className="pill" style={{ marginLeft: 6 }}>+{it.extra}</span> : null} · left{" "}
-                  {it.leftover}
-                </span>
+                <span>{it.ordered}</span>
+                <span>{it.consumed}{it.extra > 0 ? <em className="vextra">+{it.extra}</em> : null}</span>
+                <span className={it.leftover > 0 ? "vleft" : ""}>{it.leftover}</span>
               </div>
             ))}
-            <div className="vtotal">
-              <span>Total</span>
-              <span className="vv">
-                ordered {p.received} · consumed {p.consumed} · left {p.leftover}
-              </span>
-            </div>
+            <div className="vrow vfoot"><span>Total</span><span>{p.received}</span><span>{p.consumed}</span><span>{p.leftover}</span></div>
           </div>
-          {p.notes ? <p className="muted" style={{ marginTop: 10 }}>Notes: {p.notes}</p> : null}
-          <p className="muted" style={{ marginTop: 6 }}>
+          {p.notes ? <div className="vnote"><i className="ti ti-info-circle" aria-hidden="true"></i><span><b>Booker's note:</b> {p.notes}</span></div> : null}
+          <p className="vhint">
             You are checking the plate counts. The booker gives their feedback on the food after
             you approve these figures.
           </p>
@@ -212,12 +206,12 @@ export function Payments() {
       )}
 
       <div className="stats-grid">
-        <div className="stat">
+        <div className="stat"><span className="sico"><i className="ti ti-receipt" aria-hidden="true"></i></span>
           <div className="l">Total owed</div>
           <div className="n">{money(grand)}</div>
           <div className="s">{sum.meals} verified meals</div>
         </div>
-        <div className="stat">
+        <div className="stat"><span className="sico"><i className="ti ti-checks" aria-hidden="true"></i></span>
           <div className="l">Plates consumed</div>
           <div className="n">{sum.plates}</div>
           <div className="s">verified only</div>

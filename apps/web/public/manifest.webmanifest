@@ -7,7 +7,7 @@
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#F9F7F7",
-  "theme_color": "#3F72AF",
+  "theme_color": "#C2410C",
   "categories": ["productivity", "business"],
   "icons": [
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },

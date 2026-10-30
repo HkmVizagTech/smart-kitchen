@@ -19,19 +19,6 @@ const prettyStored = (iso: string) =>
   });
 const SES: Record<string, string> = { BREAKFAST: "Morning Tiffin", LUNCH: "Lunch", DINNER: "Dinner" };
 
-function Banner() {
-  return (
-    <div className="banner" id="hero">
-      <img src="/hero.jpg" alt="" style={{ display: "none" }}
-        onLoad={(e) => { const b = document.getElementById("hero"); if (b) { b.classList.add("hasimg"); (e.currentTarget as HTMLImageElement).style.display = "block"; b.querySelector(".cap")?.remove(); } }} />
-      <div className="cap">
-        <h1>Book today, served tomorrow</h1>
-        <p>The kitchen sets the menu. You just enter how many plates of each item your route needs.</p>
-      </div>
-    </div>
-  );
-}
-
 const pkey = (date: string, session: string) => `${date}|${session}`;
 
 const SES_LONG: Record<string, string> = {
@@ -307,9 +294,16 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
 
   return (
     <>
-      <Banner />
-      <h1>New Booking</h1>
-      <p className="muted">Tiffin &amp; dinner are for tomorrow — {pretty(tomorrow())}. Lunch &amp; emergency are for today.</p>
+      <div className="bk-head">
+        <div>
+          <h1>New Booking</h1>
+          <p className="muted">The kitchen sets the menu — you only enter how many plates of each item your route needs.</p>
+        </div>
+        <div className="bk-when">
+          <div className="bk-chip"><i className="ti ti-sun" aria-hidden="true"></i><span><small>Tiffin &amp; Dinner</small><b>{pretty(tomorrow())}</b></span></div>
+          <div className="bk-chip"><i className="ti ti-clock" aria-hidden="true"></i><span><small>Lunch &amp; Emergency</small><b>Today</b></span></div>
+        </div>
+      </div>
       {admin ? (
         <div className="onbehalf">
           <i className="ti ti-user-shield" aria-hidden="true"></i>
@@ -332,8 +326,8 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
 
       <GateBanner gate={gate} onCloseOutNeeded={onCloseOutNeeded} />
 
-      <h2>Tomorrow's meals</h2>
-      <div className="grid2">
+      <div className="bk-sec"><h2>Tomorrow's meals</h2><span className="muted">Cooked and served {pretty(tomorrow())}</span></div>
+      <div className="grid2 meals">
         <MealCard title="Morning Tiffin" on={tOn} setOn={setTOn} menu={tMenu} counts={tC} setCounts={setTC} total={tTotal}
           id="tiffin" progress={tProg} unit={tUnit} setUnit={setTUnit} blocked={gate?.BREAKFAST}
           past={pastFor("BREAKFAST")} menuError={tErr} retryMenu={loadMenus} requireRoute={admin} />
@@ -350,17 +344,17 @@ export function NewBooking({ user, onBooked, onCloseOutNeeded }: {
           }} />
       </div>
 
-      <h2>Today (count only)</h2>
-      <div className="grid2">
+      <div className="bk-sec"><h2>Today</h2><span className="muted">Headcount only — no dish counts</span></div>
+      <div className="grid2 meals">
         <div className={`meal ${lOn ? "on" : ""}`}>
-          <div className="head"><span className="mtitle">Lunch</span><Switch on={lOn} setOn={setLOn} /></div>
+          <div className="head"><MealHead icon="ti-soup" title="Lunch" sub={lOn ? (+lPpl > 0 ? `${+lPpl} people` : "Enter headcount") : "Not booking"} on={lOn} /><Switch on={lOn} setOn={setLOn} /></div>
           <p className="muted" style={{ margin: "6px 0 0" }}>Same-day · before {lunchCut} · headcount only</p>
           <LunchMenu menu={lMenu} error={lErr} retry={loadMenus} />
           <BlockedNote status={gate?.LUNCH} />
           {lOn && <><RoutePicker id="lunch" progress={lProg} value={lUnit} onChange={setLUnit} requireChoice={admin} /><Ppl value={lPpl} set={setLPpl} /></>}
         </div>
         <div className={`meal ${eOn ? "on" : ""}`}>
-          <div className="head"><span className="mtitle">Emergency</span><Switch on={eOn} setOn={setEOn} /></div>
+          <div className="head"><MealHead icon="ti-urgent" title="Emergency" sub={eOn ? (+ePpl > 0 ? `${+ePpl} people` : "Enter headcount") : "Not booking"} on={eOn} /><Switch on={eOn} setOn={setEOn} /></div>
           <p className="muted" style={{ margin: "6px 0 0" }}>
             Count only · an admin must approve it before the kitchen cooks it
           </p>
@@ -424,6 +418,18 @@ const perPlate = (d: MenuDish) => (d.unit === "NOS" ? `${d.qtyPerPlate} nos` : `
  * route, and the menu for that date decides what they are. So the form names
  * the dishes and asks only "how many plates".
  */
+function MealHead({ icon, title, sub, on }: { icon: string; title: string; sub: string; on: boolean }) {
+  return (
+    <div className="mh">
+      <span className="mi"><i className={`ti ${icon}`} aria-hidden="true"></i></span>
+      <div className="mt">
+        <span className="mtitle">{title}</span>
+        <span className={`msub ${on ? "on" : ""}`}>{sub}</span>
+      </div>
+    </div>
+  );
+}
+
 function MealCard({ title, on, setOn, menu, menuError, retryMenu, counts, setCounts, total, id, progress, unit, setUnit, blocked, past, requireRoute, copyFrom }: {
   title: string; on: boolean; setOn: (b: boolean) => void; menu: DayMenu | null;
   /** Set when the menu could not be fetched, so the card says so instead of
@@ -453,10 +459,8 @@ function MealCard({ title, on, setOn, menu, menuError, retryMenu, counts, setCou
   return (
     <div className={`meal ${on ? "on" : ""}`}>
       <div className="head">
-        <span className="mtitle">
-          {title}
-          {on && total > 0 ? <span className="pill" style={{ marginLeft: 8 }}>{total} plates</span> : null}
-        </span>
+        <MealHead icon={title === "Dinner" ? "ti-moon" : "ti-sun"} title={title}
+          sub={on ? (total > 0 ? `${total} plates` : "Enter plate counts") : "Not booking"} on={on} />
         <Switch on={on} setOn={setOn} />
       </div>
       <BlockedNote status={blocked} />
@@ -743,98 +747,102 @@ export function MyBookings({ user, onCloseOut }: { user: AuthedUser; onCloseOut:
   if (paged.error) return <p className="err">{paged.error}</p>;
   const list = paged.items;
   const need = all.filter((b) => b.needsCloseOut && b.status !== "CLOSED");
-  const itemSummary = (b: Booking) =>
-    b.items.length ? b.items.map((it) => `${it.dish}×${it.plates}`).join(", ") : `${b.peopleCount ?? 0} people`;
+  const mealIcon = (b: Booking) =>
+    b.isEmergency ? "ti-urgent" : b.session === "DINNER" ? "ti-moon" : b.session === "LUNCH" ? "ti-soup" : "ti-sun";
+  const dateOf = (b: Booking) =>
+    new Date(b.date).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
   return (
     <>
-      <h1>{admin ? "All bookings" : "My bookings"}</h1>
-      {admin && (
-        <p className="muted" style={{ marginTop: -6 }}>
-          Every route's orders. A booker sees only their own.
-        </p>
-      )}
+      <div className="bk-head">
+        <div>
+          <h1>{admin ? "All bookings" : "My bookings"}</h1>
+          <p className="muted">
+            {admin ? "Every route's orders. A booker sees only their own." : "Everything you have booked, newest first."}
+          </p>
+        </div>
+        <div className="bk-when">
+          <div className="bk-chip"><i className="ti ti-clipboard-list" aria-hidden="true"></i><span><small>Total bookings</small><b>{paged.total}</b></span></div>
+          <div className={`bk-chip ${need.length ? "warn" : ""}`}><i className={`ti ${need.length ? "ti-alert-circle" : "ti-circle-check"}`} aria-hidden="true"></i><span><small>Needs action</small><b>{need.length}</b></span></div>
+        </div>
+      </div>
       {need.length > 0 && (
         <>
-          <h2>Needs your attention</h2>
-          {need.map((b) => {
-            const returned = b.consumptionStatus === "REJECTED";
-            return (
-              <div className={`card ${returned ? "returned" : "soft"}`} key={b.id}>
-                <div className="between">
-                  <div>
-                    <b>{b.unit}</b> · {SES[b.session]} · {new Date(b.date).toDateString()}
-                    {returned && (
-                      <div className="returned-why">
-                        <i className="ti ti-arrow-back-up" aria-hidden="true"></i>
-                        <span><b>Sent back:</b> {b.rejectionReason || "no reason given"}</span>
-                      </div>
-                    )}
+          <div className="bk-sec"><h2>Needs your attention</h2><span className="muted">Close these out so new orders aren't blocked</span></div>
+          <div className="attn-list">
+            {need.map((b) => {
+              const returned = b.consumptionStatus === "REJECTED";
+              return (
+                <div className={`attn ${returned ? "returned" : ""}`} key={b.id}>
+                  <span className="attn-ic"><i className={`ti ${returned ? "ti-arrow-back-up" : mealIcon(b)}`} aria-hidden="true"></i></span>
+                  <div className="attn-body">
+                    <div className="attn-t"><b>{b.unit}</b> · {SES[b.session]}</div>
+                    <div className="attn-s">{dateOf(b)}</div>
+                    {returned && <div className="attn-why"><b>Sent back:</b> {b.rejectionReason || "no reason given"}</div>}
                   </div>
-                  <button className="btn" onClick={() => onCloseOut(b)}>
-                    {returned ? "Fix & resend" : "Close out"}
-                  </button>
+                  <button className="btn" onClick={() => onCloseOut(b)}>{returned ? "Fix & resend" : "Close out"}</button>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </>
       )}
-      <h2>{admin ? "Every route" : "Everything you have booked"}</h2>
+      <div className="bk-sec"><h2>{admin ? "Every route" : "History"}</h2><span className="muted">{paged.total} booking{paged.total === 1 ? "" : "s"}</span></div>
       {paged.total === 0 && (
-        <div className="card">
-          <p className="muted">{admin ? "No bookings yet." : "You haven't booked anything yet."}</p>
+        <div className="empty">
+          <i className="ti ti-clipboard-off" aria-hidden="true"></i>
+          <b>{admin ? "No bookings yet" : "Nothing booked yet"}</b>
+          <span>{admin ? "Orders placed by routes will appear here." : "Your orders will appear here once you place one."}</span>
         </div>
       )}
-      {list.map((b) => (
-        <div className="card" key={b.id}>
-          <div className="between">
-            <b>{b.unit} · {SES[b.session]}{b.isEmergency ? " · emergency" : ""}</b>
-            <span className={`badge b-${b.status}`}>{b.status}</span>
-          </div>
-          <div className="between" style={{ marginTop: 4, alignItems: "flex-start" }}>
-            <div className="muted">
-              {new Date(b.date).toDateString()} · {b.totalPlates ?? b.peopleCount ?? 0} plates
-              {b.placedBy && (admin || b.onBehalf) ? ` · placed by ${b.placedBy.name}${b.onBehalf ? " (admin)" : ""}` : ""}
-            </div>
-            {b.canEdit && editing?.id !== b.id && (
-              <button className="btn ghost sm" onClick={() => setEditing(b)}>
-                <i className="ti ti-pencil" aria-hidden="true"></i> Change
-              </button>
-            )}
-          </div>
-          {editing?.id === b.id && (
-            <EditOrder
-              booking={b}
-              menu={editMenu}
-              onCancel={() => setEditing(null)}
-              onDone={() => { setEditing(null); reload(); }}
-            />
-          )}
-          <div style={{ marginTop: 6, fontSize: 14 }}>{itemSummary(b)}</div>
-          {b.approval === "PENDING" ? (
-            <div className="muted" style={{ marginTop: 6 }}>
-              <i className="ti ti-clock" aria-hidden="true"></i>{" "}
-              Emergency order — waiting for an admin to approve it.
-            </div>
-          ) : b.approval === "DECLINED" ? (
-            <div className="returned-why" style={{ marginTop: 8 }}>
-              <i className="ti ti-x" aria-hidden="true"></i>
-              <span><b>Declined:</b> {b.declineReason || "no reason given"}</span>
-            </div>
-          ) : b.consumptionStatus === "REJECTED" ? (
-            <div className="returned-why" style={{ marginTop: 8 }}>
-              <i className="ti ti-arrow-back-up" aria-hidden="true"></i>
-              <span><b>Sent back:</b> {b.rejectionReason || "no reason given"}</span>
-            </div>
-          ) : b.consumptionStatus === "VERIFIED" ? (
-            <div className="muted" style={{ marginTop: 4 }}>
-              Verified{b.amount != null ? ` · ₹${b.amount.toLocaleString("en-IN")}` : ""}
-            </div>
-          ) : b.consumptionStatus ? (
-            <div className="muted" style={{ marginTop: 4 }}>Awaiting verification</div>
-          ) : null}
-        </div>
-      ))}
+      <div className="bkl">
+        {list.map((b) => {
+          const state =
+            b.approval === "PENDING" ? { k: "wait", i: "ti-clock", t: "Waiting for an admin to approve this emergency order" }
+            : b.approval === "DECLINED" ? { k: "bad", i: "ti-x", t: `Declined: ${b.declineReason || "no reason given"}` }
+            : b.consumptionStatus === "REJECTED" ? { k: "bad", i: "ti-arrow-back-up", t: `Sent back: ${b.rejectionReason || "no reason given"}` }
+            : b.consumptionStatus === "VERIFIED" ? { k: "ok", i: "ti-circle-check", t: `Verified${b.amount != null ? ` · ₹${b.amount.toLocaleString("en-IN")}` : ""}` }
+            : b.consumptionStatus ? { k: "info", i: "ti-clock", t: "Awaiting verification" }
+            : null;
+          return (
+            <article className="bkc" key={b.id}>
+              <header className="bkc-h">
+                <span className={`bkc-ic ${b.status === "CLOSED" ? "done" : ""}`}><i className={`ti ${mealIcon(b)}`} aria-hidden="true"></i></span>
+                <div className="bkc-t">
+                  <div className="bkc-title">{b.unit} <span>· {SES[b.session]}{b.isEmergency ? " · Emergency" : ""}</span></div>
+                  <div className="bkc-sub">
+                    {dateOf(b)} · {b.totalPlates ?? b.peopleCount ?? 0} {b.items.length ? "plates" : "people"}
+                    {b.placedBy && (admin || b.onBehalf) ? ` · by ${b.placedBy.name}${b.onBehalf ? " (admin)" : ""}` : ""}
+                  </div>
+                </div>
+                <span className={`badge b-${b.status}`}>{b.status}</span>
+              </header>
+              <div className="bkc-items">
+                {b.items.length
+                  ? b.items.map((it, i) => <span className="dchip" key={i}>{it.dish}<b>×{it.plates}</b></span>)
+                  : <span className="dchip">Headcount<b>{b.peopleCount ?? 0}</b></span>}
+              </div>
+              {(state || (b.canEdit && editing?.id !== b.id)) && (
+                <footer className="bkc-f">
+                  {state ? <span className={`bkc-state ${state.k}`}><i className={`ti ${state.i}`} aria-hidden="true"></i>{state.t}</span> : <span />}
+                  {b.canEdit && editing?.id !== b.id && (
+                    <button className="btn ghost sm" onClick={() => setEditing(b)}>
+                      <i className="ti ti-pencil" aria-hidden="true"></i> Change
+                    </button>
+                  )}
+                </footer>
+              )}
+              {editing?.id === b.id && (
+                <EditOrder
+                  booking={b}
+                  menu={editMenu}
+                  onCancel={() => setEditing(null)}
+                  onDone={() => { setEditing(null); reload(); }}
+                />
+              )}
+            </article>
+          );
+        })}
+      </div>
       <Pagination page={paged.page} pages={paged.pages} total={paged.total} pageSize={paged.pageSize}
         onPage={paged.setPage} onPageSize={paged.setPageSize} busy={paged.loading} />
     </>
@@ -1010,13 +1018,13 @@ export function CloseOut({ preset, onDone }: { user: AuthedUser; preset: Booking
 
       {!booking && (
         <div className="card">
-          <h2 style={{ marginTop: 0 }}>Pick a meal to close out</h2>
+          <div className="section-title">Pick a meal to close out</div>
           {list.length === 0 ? <p className="muted">Nothing to close out right now.</p> :
             list.map((b) => {
               const waiting = b.consumptionStatus === "PENDING";
               const forFeedback = b.consumptionStatus === "VERIFIED" && !b.hasFeedback;
               return (
-                <div className="between" key={b.id} style={{ padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
+                <div className="between pickrow" key={b.id}>
                   <div>
                     <b>{b.unit}</b> · {SES[b.session]} · <span className="muted">{new Date(b.date).toDateString()}</span>
                     {b.consumptionStatus === "REJECTED" && (

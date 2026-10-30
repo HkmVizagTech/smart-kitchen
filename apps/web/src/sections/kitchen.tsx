@@ -177,10 +177,6 @@ export function KitchenOrders({ date }: { date: string }) {
             <div className="olist">
               {list.map((o) => {
                 const n = NEXT[o.status];
-                const itemsText =
-                  o.items.length > 0
-                    ? o.items.map((it) => `${it.plates}× ${it.dish.name}`).join("  ·  ")
-                    : `count: ${o.peopleCount ?? 0}`;
                 const done = o.status === "DELIVERED" || o.status === "CLOSED";
                 return (
                   <div className="ocard" key={o.id}>
@@ -199,7 +195,17 @@ export function KitchenOrders({ date }: { date: string }) {
                       </div>
                       <span className={`badge b-${o.status}`}>{o.status}</span>
                     </div>
-                    <div className="oitems">{itemsText}</div>
+                    <div className="oitems">
+                      {o.items.length > 0
+                        ? o.items.map((it, i) => <span className="dchip" key={i}>{it.dish.name}<b>×{it.plates}</b></span>)
+                        : <span className="dchip">Headcount<b>{o.peopleCount ?? 0}</b></span>}
+                    </div>
+                    <ol className="otrack" aria-label="Order progress">
+                      {FLOW.map((f, i) => {
+                        const at = Math.max(FLOW.indexOf(o.status), o.status === "CLOSED" ? FLOW.length : -1);
+                        return <li key={f} className={i < at ? "d" : i === at ? "n" : ""}><span></span>{f.charAt(0) + f.slice(1).toLowerCase()}</li>;
+                      })}
+                    </ol>
                     <div className="ofoot">
                       {done ? (
                         <span className="odone"><i className="ti ti-check" aria-hidden="true"></i> Delivered</span>

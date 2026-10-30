@@ -53,22 +53,22 @@ export default function Feedback() {
 
       {sum && (
         <div className="stats-grid">
-          <div className="stat">
+          <div className="stat"><span className="sico"><i className="ti ti-message-2" aria-hidden="true"></i></span>
             <div className="l">Last 30 days</div>
             <div className="n">{sum.count}</div>
             <div className="s">{plural(sum.withRemarks, "written comment")}</div>
           </div>
-          <div className="stat">
+          <div className="stat"><span className="sico"><i className="ti ti-star" aria-hidden="true"></i></span>
             <div className="l">Avg taste</div>
             <div className="n">{sum.avgTaste || "—"}</div>
             <div className="s">out of 5</div>
           </div>
-          <div className="stat">
+          <div className="stat"><span className="sico"><i className="ti ti-circle-check" aria-hidden="true"></i></span>
             <div className="l">Avg quality</div>
             <div className="n">{sum.avgQuality || "—"}</div>
             <div className="s">out of 5</div>
           </div>
-          <div className={`stat ${sum.poor ? "hot" : ""}`}>
+          <div className={`stat ${sum.poor ? "hot" : ""}`}><span className="sico"><i className="ti ti-alert-triangle" aria-hidden="true"></i></span>
             <div className="l">Rated 2 or below</div>
             <div className="n">{sum.poor}</div>
             <div className="s">worth following up</div>
@@ -89,11 +89,11 @@ export default function Feedback() {
       </div>
 
       {shown.length === 0 && (
-        <p className="muted" style={{ marginTop: 16 }}>
-          {filter === "all"
-            ? "No feedback yet. It appears here once a route closes out a meal and verification approves the counts."
-            : "Nothing matches this filter."}
-        </p>
+        <div className="empty" style={{ marginTop: 16 }}>
+          <i className="ti ti-star" aria-hidden="true"></i>
+          <b>{filter === "all" ? "No feedback yet" : "Nothing matches this filter"}</b>
+          {filter === "all" && <span>It appears here once a route closes out a meal and verification approves the counts.</span>}
+        </div>
       )}
 
       <div className="olist" style={{ marginTop: 14 }}>
@@ -122,7 +122,7 @@ export default function Feedback() {
 
             {f.dishes.length > 0 && (
               <div className="oitems">
-                {f.dishes.map((d) => `${d.plates}× ${d.name}`).join(" · ")}
+                {f.dishes.map((d, i) => <span className="dchip" key={i}>{d.name}<b>×{d.plates}</b></span>)}
               </div>
             )}
 

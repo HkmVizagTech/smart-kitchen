@@ -30,12 +30,21 @@ const GROUP_NOTE: Record<DishGroup, string> = {
   ITEM3: "Tiffin sides (Wada, Punugulu, Uppama…)",
 };
 
+const Chevron = ({ open }: { open: boolean }) => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
+    style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .2s" }} aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+);
+
 export function Dishes() {
   const { data, error, loading, reload } = useAsync(() => api.dishes());
   const toast = useToast();
   const [edits, setEdits] = useState<Record<number, Partial<Dish>>>({});
   const [savingId, setSavingId] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
+  const [q, setQ] = useState("");
+  const [gf, setGf] = useState<"ALL" | DishGroup>("ALL");
+  const [openId, setOpenId] = useState<number | null>(null);
+  const [shut, setShut] = useState<Record<string, boolean>>({});
 
   function set(id: number, key: "qtyPerPlate" | "packingFactor" | "packingVesselKg" | "ratePerPlate", value: string) {
     setEdits((e) => ({ ...e, [id]: { ...e[id], [key]: value === "" ? null : Number(value) } }));
@@ -59,6 +68,13 @@ export function Dishes() {
   if (error) return <p className="err">{error}</p>;
 
   const dirty = (id: number) => !!edits[id] && Object.keys(edits[id]).length > 0;
+  const val = (d: Dish, k: "qtyPerPlate" | "packingFactor" | "packingVesselKg" | "ratePerPlate") => {
+    const e = edits[d.id]?.[k];
+    const v = e !== undefined ? e : d[k];
+    return v == null ? "" : String(v);
+  };
+  const term = q.trim().toLowerCase();
+  const all = data!;
 
   return (
     <div>
@@ -66,8 +82,8 @@ export function Dishes() {
         <div>
           <h1>Dishes</h1>
           <p className="muted">
-            Groups, menu quantities, packing factors and rates. Vessel kg is blank for counted
-            items; a blank rate charges the default set under Settings.
+            {all.length} dishes in {DISH_GROUPS.filter((g) => all.some((d) => d.group === g)).length} groups.
+            Tap a dish to edit its quantity, packing and rate.
           </p>
         </div>
         <button className="btn" onClick={() => setAdding(true)}>
@@ -75,86 +91,122 @@ export function Dishes() {
         </button>
       </div>
 
-      {DISH_GROUPS.map((g) => {
-        const items = data!.filter((d) => d.group === g);
+      <div className="dish-bar">
+        <div className="search">
+          <i className="ti ti-search" aria-hidden="true"></i>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search dishes…" aria-label="Search dishes" />
+        </div>
+        <div className="segmented">
+          <button className={gf === "ALL" ? "on" : ""} onClick={() => setGf("ALL")}>All</button>
+          {DISH_GROUPS.map((g) => (
+            <button key={g} className={gf === g ? "on" : ""} onClick={() => setGf(g)}>
+              {GROUP_LABEL[g]} <span className="gcount">{all.filter((d) => d.group === g).length}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {DISH_GROUPS.filter((g) => gf === "ALL" || gf === g).map((g) => {
+        const items = all.filter((d) => d.group === g && (!term || d.name.toLowerCase().includes(term)));
         if (items.length === 0) return null;
+        const closed = !!shut[g] && !term;
         return (
-          <div className="card editor-group" key={g}>
-            <div className="eg-head">
-              <span className="eg-badge"><i className="ti ti-bowl-spoon" aria-hidden="true"></i> {GROUP_LABEL[g]}</span>
-              <span className="eg-note">{GROUP_NOTE[g]}</span>
-            </div>
-            {items.map((d) => (
-              <div className="erow" key={d.id}>
-                <div className="erow-main">
-                  <span className="dish-ic"><i className="ti ti-soup" aria-hidden="true"></i></span>
-                  <div>
-                    <div className="erow-name">{d.name}</div>
-                    <div className="erow-sub">
-                      {d.bookable ? "Shown on booking menu" : "Hidden / auto-derived"}
-                      {d.accompaniment ? " \u00b7 accompaniment" : ""}
+          <section className="dgroup" key={g}>
+            <button className="dg-head" onClick={() => setShut((x) => ({ ...x, [g]: !x[g] }))} aria-expanded={!closed}>
+              <span className="dg-badge"><i className="ti ti-bowl-spoon" aria-hidden="true"></i>{GROUP_LABEL[g]}</span>
+              <span className="dg-note">{GROUP_NOTE[g]}</span>
+              <span className="dg-count">{items.length}</span>
+              <Chevron open={!closed} />
+            </button>
+            {!closed && (
+              <div className="dg-body">
+                {items.map((d) => {
+                  const open = openId === d.id;
+                  return (
+                    <div className={`drow ${open ? "open" : ""} ${dirty(d.id) ? "dirty" : ""}`} key={d.id}>
+                      <button className="drow-h" onClick={() => setOpenId(open ? null : d.id)} aria-expanded={open}>
+                        <span className="dish-ic"><i className="ti ti-soup" aria-hidden="true"></i></span>
+                        <span className="drow-t">
+                          <span className="drow-name">{d.name}{dirty(d.id) && <em className="unsaved">unsaved</em>}</span>
+                          <span className="drow-sum">
+                            {d.qtyPerPlate} {d.unit === "NOS" ? "nos" : "g"} / plate
+                            {d.ratePerPlate != null ? ` · ₹${d.ratePerPlate}` : " · default rate"}
+                          </span>
+                        </span>
+                        <span className="drow-tags">
+                          {d.accompaniment && <span className="tg side">Side dish</span>}
+                          <span className={`tg ${d.bookable ? "on" : "off"}`}>{d.bookable ? "Bookable" : "Hidden"}</span>
+                        </span>
+                        <Chevron open={open} />
+                      </button>
+                      {open && (
+                        <div className="drow-edit">
+                          <div className="dflags">
+                            <label className="dflag">
+                              <span><b>Bookable</b><small>Shown on the booking menu</small></span>
+                              <span className="switch">
+                                <input type="checkbox" defaultChecked={d.bookable} onChange={(e) => saveField(d, { bookable: e.target.checked })} />
+                                <span className="sl"></span>
+                              </span>
+                            </label>
+                            {/* Decides which side of the packing sheet a dish lands on. */}
+                            <label className="dflag">
+                              <span><b>Side dish</b><small>Served with a main dish; not counted in plates</small></span>
+                              <span className="switch">
+                                <input type="checkbox" defaultChecked={d.accompaniment} onChange={(e) => saveField(d, { accompaniment: e.target.checked })} />
+                                <span className="sl"></span>
+                              </span>
+                            </label>
+                          </div>
+                          <div className="dfields">
+                            <div className="ef">
+                              <label>Group</label>
+                              <select className="ctrl" defaultValue={d.group} onChange={(e) => saveField(d, { group: e.target.value as DishGroup })}>
+                                {DISH_GROUPS.map((x) => <option key={x} value={x}>{GROUP_LABEL[x]}</option>)}
+                              </select>
+                            </div>
+                            <div className="ef">
+                              <label>Qty / plate</label>
+                              <div className="inp-unit">
+                                <input className="ctrl" inputMode="decimal" value={val(d, "qtyPerPlate")} onChange={(e) => set(d.id, "qtyPerPlate", e.target.value)} />
+                                <span className="u">{d.unit === "NOS" ? "nos" : "g"}</span>
+                              </div>
+                            </div>
+                            <div className="ef">
+                              <label>Packing factor</label>
+                              <input className="ctrl" inputMode="decimal" value={val(d, "packingFactor")} onChange={(e) => set(d.id, "packingFactor", e.target.value)} />
+                            </div>
+                            <div className="ef">
+                              <label>Rate / plate</label>
+                              <div className="inp-unit">
+                                <span className="u pre">₹</span>
+                                <input className="ctrl" inputMode="decimal" value={val(d, "ratePerPlate")} placeholder="default" onChange={(e) => set(d.id, "ratePerPlate", e.target.value)} />
+                              </div>
+                            </div>
+                            <div className="ef">
+                              <label>Vessel kg</label>
+                              <input className="ctrl" inputMode="decimal" value={val(d, "packingVesselKg")} placeholder="—" onChange={(e) => set(d.id, "packingVesselKg", e.target.value)} />
+                            </div>
+                          </div>
+                          <div className="dsave">
+                            <span className="muted">{dirty(d.id) ? "You have unsaved changes." : "Toggles save instantly. Numbers need Save."}</span>
+                            <button className={`btn sm ${savingId === d.id ? "loading" : ""}`} onClick={() => save(d)} disabled={!dirty(d.id) || savingId === d.id}>
+                              <i className="ti ti-device-floppy" aria-hidden="true"></i> Save changes
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                </div>
-                <div className="erow-fields">
-                  <div className="ef">
-                    <label>Group</label>
-                    <select className="ctrl" defaultValue={d.group} onChange={(e) => saveField(d, { group: e.target.value as DishGroup })}>
-                      {DISH_GROUPS.map((x) => <option key={x} value={x}>{GROUP_LABEL[x]}</option>)}
-                    </select>
-                  </div>
-                  <div className="ef toggle">
-                    <label>Bookable</label>
-                    <label className="switch">
-                      <input type="checkbox" defaultChecked={d.bookable} onChange={(e) => saveField(d, { bookable: e.target.checked })} />
-                      <span className="sl"></span>
-                    </label>
-                  </div>
-                  {/* Decides which side of the packing sheet a dish lands on.
-                      It was fixed at creation with no way to change it, so a
-                      side dish like Raita counted as a main item and inflated
-                      the indent plate total. */}
-                  <div className="ef toggle">
-                    <label title="Goes out with a main dish; quantity follows that dish and is left out of the indent plate count.">Accompaniment</label>
-                    <label className="switch">
-                      <input type="checkbox" defaultChecked={d.accompaniment} onChange={(e) => saveField(d, { accompaniment: e.target.checked })} />
-                      <span className="sl"></span>
-                    </label>
-                  </div>
-                  <div className="ef narrow">
-                    <label>Qty / plate</label>
-                    <div className="inp-unit">
-                      <input className="ctrl" defaultValue={d.qtyPerPlate} onChange={(e) => set(d.id, "qtyPerPlate", e.target.value)} />
-                      <span className="u">{d.unit === "NOS" ? "nos" : "g"}</span>
-                    </div>
-                  </div>
-                  <div className="ef narrow">
-                    <label>Packing factor</label>
-                    <input className="ctrl" defaultValue={d.packingFactor} onChange={(e) => set(d.id, "packingFactor", e.target.value)} />
-                  </div>
-                  <div className="ef narrow">
-                    <label>Rate / plate</label>
-                    <div className="inp-unit">
-                      <span className="u pre">₹</span>
-                      <input className="ctrl" defaultValue={d.ratePerPlate ?? ""} placeholder="default"
-                        onChange={(e) => set(d.id, "ratePerPlate", e.target.value)} />
-                    </div>
-                  </div>
-                  <div className="ef narrow">
-                    <label>Vessel kg</label>
-                    <input className="ctrl" defaultValue={d.packingVesselKg ?? ""} placeholder="—" onChange={(e) => set(d.id, "packingVesselKg", e.target.value)} />
-                  </div>
-                </div>
-                <div className="erow-action">
-                  <button className={`btn sm ${savingId === d.id ? "loading" : ""}`} onClick={() => save(d)} disabled={!dirty(d.id) || savingId === d.id}>
-                    <i className="ti ti-device-floppy" aria-hidden="true"></i> Save
-                  </button>
-                </div>
+                  );
+                })}
               </div>
-            ))}
-          </div>
+            )}
+          </section>
         );
       })}
+      {term && all.every((d) => !d.name.toLowerCase().includes(term)) && (
+        <div className="empty"><i className="ti ti-search" aria-hidden="true"></i><b>No dish matches “{q}”</b><span>Try a different name.</span></div>
+      )}
 
       {adding && <AddDishModal onClose={() => setAdding(false)}
         onSaved={(name) => { toast(`Added ${name}`); reload(); }} />}
@@ -607,8 +659,9 @@ export function Dashboard() {
   if (loading) return <p className="muted">Loading…</p>;
   if (error) return <p className="err">{error}</p>;
   const d = data!;
-  const Cover = ({ label, s }: { label: string; s: { booked: number; total: number; plates: number } }) => (
+  const Cover = ({ label, s, icon }: { label: string; icon: string; s: { booked: number; total: number; plates: number } }) => (
     <div className="stat">
+      <span className="sico"><i className={`ti ${icon}`} aria-hidden="true"></i></span>
       <div className="l">{label}</div>
       <div className="n">{s.booked}/{s.total}</div>
       <div className="s">routes booked · {plural(s.plates, "plate")}</div>
@@ -621,20 +674,22 @@ export function Dashboard() {
       <p className="muted">Tomorrow's booking progress and today's activity.</p>
       <EmergencyQueue />
       <div className="stats-grid">
-        <Cover label="Tomorrow · Tiffin" s={d.tomorrow.breakfast} />
-        <Cover label="Tomorrow · Dinner" s={d.tomorrow.dinner} />
+        <Cover label="Tomorrow · Tiffin" icon="ti-sun" s={d.tomorrow.breakfast} />
+        <Cover label="Tomorrow · Dinner" icon="ti-moon" s={d.tomorrow.dinner} />
         <div className={`stat ${d.pendingVerifications ? "hot" : ""}`}>
+          <span className="sico"><i className="ti ti-checkup-list" aria-hidden="true"></i></span>
           <div className="l">Pending verifications</div>
           <div className="n">{d.pendingVerifications}</div>
           <div className="s">awaiting approval</div>
         </div>
         <div className="stat">
+          <span className="sico"><i className="ti ti-soup" aria-hidden="true"></i></span>
           <div className="l">Today · Lunch</div>
           <div className="n">{d.today.lunch.plates}</div>
           <div className="s">{plural(d.today.lunch.orders, "order")}</div>
         </div>
-        <div className="stat"><div className="l">Registered users</div><div className="n">{d.usersCount}</div></div>
-        <div className="stat"><div className="l">Bookable dishes</div><div className="n">{d.dishesCount}</div></div>
+        <div className="stat"><span className="sico"><i className="ti ti-users" aria-hidden="true"></i></span><div className="l">Registered users</div><div className="n">{d.usersCount}</div></div>
+        <div className="stat"><span className="sico"><i className="ti ti-bowl-spoon" aria-hidden="true"></i></span><div className="l">Bookable dishes</div><div className="n">{d.dishesCount}</div></div>
       </div>
       <div className="card">
         <div className="section-title">Recent activity</div>
@@ -704,9 +759,11 @@ export function Emergencies() {
       </div>
 
       {rows.length === 0 && (
-        <p className="muted" style={{ marginTop: 16 }}>
-          No emergency orders here. Pending ones also appear at the top of the Dashboard.
-        </p>
+        <div className="empty" style={{ marginTop: 16 }}>
+          <i className="ti ti-urgent" aria-hidden="true"></i>
+          <b>No emergency orders</b>
+          <span>Pending ones also appear at the top of the Dashboard.</span>
+        </div>
       )}
 
       <div className="olist" style={{ marginTop: 14 }}>
@@ -769,13 +826,13 @@ export function Reports() {
       {data && (
         <>
           <div className="stats-grid">
-            <div className="stat"><div className="l">Verified meals</div><div className="n">{data.meals}</div></div>
-            <div className="stat"><div className="l">Plates consumed</div><div className="n">{data.consumed}</div></div>
+            <div className="stat"><span className="sico"><i className="ti ti-checks" aria-hidden="true"></i></span><div className="l">Verified meals</div><div className="n">{data.meals}</div></div>
+            <div className="stat"><span className="sico"><i className="ti ti-bowl" aria-hidden="true"></i></span><div className="l">Plates consumed</div><div className="n">{data.consumed}</div></div>
             {/* Red only when there is something to be red about. This tile used
                 to be fixed "hot", so a perfect run with nothing left over still
                 reported itself in alarm colours. */}
-            <div className={`stat ${data.wastePct >= WASTE_ALERT_PCT ? "hot" : ""}`}><div className="l">Waste %</div><div className="n">{data.wastePct}%</div><div className="s">{data.leftover} of {data.ordered} plates</div></div>
-            <div className="stat"><div className="l">Avg taste / quality</div><div className="n">{data.avgTaste} / {data.avgQuality}</div><div className="s">out of 5</div></div>
+            <div className={`stat ${data.wastePct >= WASTE_ALERT_PCT ? "hot" : ""}`}><span className="sico"><i className="ti ti-trash" aria-hidden="true"></i></span><div className="l">Waste %</div><div className="n">{data.wastePct}%</div><div className="s">{data.leftover} of {data.ordered} plates</div></div>
+            <div className="stat"><span className="sico"><i className="ti ti-star" aria-hidden="true"></i></span><div className="l">Avg taste / quality</div><div className="n">{data.avgTaste} / {data.avgQuality}</div><div className="s">out of 5</div></div>
           </div>
           <div className="card">
             <div className="section-title">By route</div>
